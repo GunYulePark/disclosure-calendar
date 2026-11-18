@@ -1,38 +1,53 @@
 (() => {
   'use strict';
   const DATA=window.DISCLOSURE_DATA, C=window.CalendarCore, KEY='disclosure-planner-v1';
+  const icon=window.PlannerUI.icon;
   const $=id=>document.getElementById(id);
   const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const category=id=>DATA.categories.find(c=>c.id===id)||DATA.categories[4];
   const badge=id=>{const c=category(id);return `<span class="category-badge" style="--category:${c.color};--soft:${c.soft}"><i></i>${esc(c.label)}</span>`;};
   const today=C.todaySeoul(), todayDate=C.parseDate(today);
-  const state={year:todayDate.getFullYear(),month:todayDate.getMonth()+1,view:'calendar',category:'all',query:'',selectedDate:null};
-  let saved={settings:{},overrides:{},done:{},custom:[]}, selected=null, settingsYear=state.year, toastTimer;
+  const state={year:todayDate.getFullYear(),month:todayDate.getMonth()+1,view:'calendar',category:'all',query:'',selectedDate:null,mode:'calendar',sort:'date',descending:false};
+  let saved={settings:{},overrides:{},done:{},custom:[]}, selected=null, settingsYear=state.year, toastTimer, storageAvailable=true, pendingBackup=null;
   try {
     const value=JSON.parse(localStorage.getItem(KEY)||'null');
     if(value&&typeof value==='object') saved={settings:value.settings||{},overrides:value.overrides||{},done:value.done||{},custom:Array.isArray(value.custom)?value.custom:[]};
-  } catch { /* 저장소를 사용할 수 없어도 기본 캘린더는 표시합니다. */ }
-  function toast(message) { $('toast').textContent=message;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),3500); }
-  function persist() {try {localStorage.setItem(KEY,JSON.stringify(saved));return true;}catch{toast('브라우저 저장 공간을 사용할 수 없습니다. 변경은 현재 화면에서만 유지됩니다.');return false;}}
+  } catch { storageAvailable=false; }
+  function toast(message) { $('toast').textContent=message+(!storageAvailable?' (브라우저 저장 불가 · 현재 화면에만 유지)':'');$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4500); }
+  function updateStorageStatus(){document.querySelectorAll('[data-storage-label]').forEach(el=>{el.textContent=storageAvailable?'이 브라우저에 자동 저장':'브라우저 저장 불가';});$('storage-status').textContent=storageAvailable?'이 브라우저에 자동 저장 중':'저장 불가 · 백업 파일을 내려받으세요';}
+  function persist() {try {localStorage.setItem(KEY,JSON.stringify(saved));storageAvailable=true;updateStorageStatus();return true;}catch{storageAvailable=false;updateStorageStatus();toast('변경 내용을 저장하지 못했습니다.');return false;}}
   function monthKey(){return `${state.year}-${C.pad(state.month)}`;}
   function events(){return C.eventsForYear(DATA,state.year,saved);}
   function filtered(list){return list.filter(e=>C.matches(e,state.category,state.query));}
   function formatDate(date){const d=C.parseDate(date);return d?`${d.getMonth()+1}월 ${d.getDate()}일 (${['일','월','화','수','목','금','토'][d.getDay()]})`:'';}
-  function tag(e){return e.done?'<span class="state-tag complete">완료</span>':e.confirmed?'<span class="state-tag set">지정</span>':'<span class="state-tag">예정</span>';}
-  function eventButton(e,kind='task') {
+  function period(e,compact=false){if(!e.date)return e.timing;const end=e.endDate||e.date;return end===e.date?formatDate(e.date):compact?`${Number(e.date.slice(5,7))}/${Number(e.date.slice(8))}–${Number(end.slice(5,7))}/${Number(end.slice(8))}`:`${formatDate(e.date)} ~ ${formatDate(end)}`;}
+  function tag(e){return e.done?'<span class="state-tag complete">완료</span>':e.draft?'<span class="state-tag draft">초안</span>':e.confirmed?'<span class="state-tag set">저장</span>':'<span class="state-tag">예정</span>';}
+  function eventButton(e,kind='task',day=null) {
     const c=category(e.category);
-    if(kind==='calendar')return `<button class="calendar-event ${e.done?'is-done':''}" style="--category:${c.color};--soft:${c.soft}" data-event="${esc(e.id)}" title="${esc(e.title)} · ${e.done?'완료':e.confirmed?'지정일':'예정일'}"><span class="event-dot"></span><span>${esc(e.title)}</span><small>${e.done?'✓':e.confirmed?'':'예정'}</small></button>`;
-    return `<button class="task-row ${e.done?'is-done':''}" data-event="${esc(e.id)}"><span class="task-indicator" style="--category:${c.color}">${e.done?'✓':''}</span><span class="task-body"><strong>${esc(e.title)}</strong><small>${esc(e.date?formatDate(e.date):e.timing)}</small></span>${tag(e)}<span class="row-arrow">›</span></button>`;
+    if(kind==='calendar')return `<button class="calendar-event ${e.done?'is-done':''} ${e.draft?'draft-event':''} ${day&&day!==e.date?'continued':''}" style="--category:${c.color};--soft:${c.soft}" data-event="${esc(e.id)}" title="${esc(e.title)} · ${esc(period(e))} · ${e.draft?'초안':e.confirmed?'저장':'예정'} · 예상 ${e.durationDays||1}일"><span class="event-dot"></span><span>${esc(e.title)}</span>${e.done?icon('check'):''}</button>`;
+    return `<button class="task-row ${e.done?'is-done':''}" data-event="${esc(e.id)}"><span class="task-indicator" style="--category:${c.color}">${e.done?icon('check'):''}</span><span class="task-body"><strong>${esc(e.title)}</strong><small>${esc(e.date?period(e,true):e.timing)}${e.durationDays>1?` · 예상 ${e.durationDays}일`:''}</small></span>${tag(e)}<span class="row-arrow">${icon('right')}</span></button>`;
   }
   function renderCategories(){
-    $('category-nav').innerHTML=`<button data-category="all" class="${state.category==='all'?'active':''}"><span class="category-dot all-dot"></span>전체 업무</button>`+DATA.categories.map(c=>`<button data-category="${c.id}" class="${state.category===c.id?'active':''}"><span class="category-dot" style="background:${c.color}"></span>${c.label}</button>`).join('');
+    const list=state.view==='guide'?DATA.guides:state.view==='year'?events().filter(e=>e.month.startsWith(String(state.year))):C.eventsForMonth(events(),monthKey());
+    const html=`<button data-category="all" class="${state.category==='all'?'active':''}" aria-pressed="${state.category==='all'}"><span class="category-dot all-dot"></span>전체 업무<span class="nav-count">${list.length}</span></button>`+DATA.categories.map(c=>`<button data-category="${c.id}" class="${state.category===c.id?'active':''}" aria-pressed="${state.category===c.id}"><span class="category-dot" style="background:${c.color}"></span>${c.label}<span class="nav-count">${list.filter(e=>e.category===c.id).length}</span></button>`).join('');
+    $('category-nav').innerHTML=html;$('mobile-category-nav').innerHTML=html;
   }
   function renderSummary(monthEvents){
-    const done=monthEvents.filter(e=>e.done).length, dated=monthEvents.filter(e=>e.date).length;
-    $('summary-row').innerHTML=`<div class="summary-card"><span class="summary-icon green">▦</span><div><span>이달의 전체 업무</span><strong>${monthEvents.length}<small>건</small></strong></div><span class="summary-card-hint">${state.month}월 기준</span></div><div class="summary-card"><span class="summary-icon blue">◷</span><div><span>날짜가 있는 일정</span><strong>${dated}<small>건</small></strong></div><span class="summary-card-hint">예정일 포함</span></div><div class="summary-card"><span class="summary-icon sand">✓</span><div><span>이달의 완료</span><strong>${done}<small>/ ${monthEvents.length}건</small></strong></div><div class="progress-ring" style="--progress:${monthEvents.length?done/monthEvents.length*100:0}%"><span>${monthEvents.length?Math.round(done/monthEvents.length*100):0}%</span></div></div>`;
+    const done=monthEvents.filter(e=>e.done).length, drafts=monthEvents.filter(e=>e.draft).length;
+    const percent=monthEvents.length?Math.round(done/monthEvents.length*100):0;
+    $('summary-row').innerHTML=`<div class="summary-metric"><span class="metric-label">${state.view==='year'?'연간':'이달의'} 전체 업무</span><strong>${monthEvents.length}<small>건</small></strong><span class="metric-description">개인 일정 포함</span></div><div class="summary-metric"><span class="metric-label">준비 일정 초안</span><strong>${drafts}<small>건</small></strong><span class="metric-description">예상 소요일 기준</span></div><div class="summary-metric"><span class="metric-label">완료한 업무</span><strong>${done}<small>/ ${monthEvents.length}건</small></strong><div class="metric-progress"><span class="progress-track" role="progressbar" aria-label="업무 완료율" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"><i style="width:${percent}%"></i></span><span>${percent}%</span></div></div>`;
+  }
+  function renderTaskTable(list){
+    const rows=[...list].sort((a,b)=>{
+      const result=state.sort==='title'?a.title.localeCompare(b.title,'ko'):(a.date||a.month+'-99').localeCompare(b.date||b.month+'-99')||a.title.localeCompare(b.title,'ko');
+      return state.descending?-result:result;
+    });
+    $('table-count').textContent=rows.length;
+    const sortHeader=(key,label)=>`<th scope="col" ${state.sort===key?`aria-sort="${state.descending?'descending':'ascending'}"`:''}><button data-sort="${key}">${label}${icon('sort')}</button></th>`;
+    $('task-table').innerHTML=`<table class="data-table"><caption class="sr-only">${state.year}년 ${state.month}월 업무 목록</caption><thead><tr><th scope="col" class="checkbox-cell"><span class="sr-only">완료</span></th>${sortHeader('title','업무')}${sortHeader('date','일정')}<th scope="col" class="category-column">업무 구분</th><th scope="col">상태</th><th scope="col" class="detail-cell"><span class="sr-only">상세 보기</span></th></tr></thead><tbody>${rows.map(e=>`<tr class="${e.done?'is-done':''}"><td class="checkbox-cell"><button class="completion-control ${e.done?'checked':''}" data-complete="${esc(e.id)}" aria-label="${esc(e.title)} ${e.done?'완료 취소':'완료로 표시'}" aria-pressed="${e.done}">${e.done?icon('check'):''}</button></td><td class="task-name-cell"><button class="table-task-link" data-event="${esc(e.id)}">${esc(e.title)}</button><small class="mobile-category">${esc(category(e.category).label)}</small></td><td class="table-date">${e.date?esc(period(e,true)):'<span class="unscheduled-label">월 중</span>'}</td><td class="category-column">${badge(e.category)}</td><td>${tag(e)}</td><td class="detail-cell"><button class="icon-button ghost" data-event="${esc(e.id)}" aria-label="${esc(e.title)} 상세 보기">${icon('right')}</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty-table">조건에 맞는 업무가 없습니다. 검색어나 업무 구분을 변경해 주세요.</td></tr>'}</tbody></table><div class="table-footer">${rows.length}개 업무 · 제목을 선택하면 업무 안내가 열립니다.</div>`;
   }
   function renderCalendar(monthEvents){
-    const matched=filtered(monthEvents), monthly=matched.filter(e=>!e.date), dated=matched.filter(e=>e.date);
+    const matched=filtered(monthEvents), monthly=matched.filter(e=>e.id.startsWith('month-')), dated=matched.filter(e=>e.date);
     $('month-task-count').textContent=monthly.length;
     $('month-tasks-list').innerHTML=monthly.length?monthly.map(e=>eventButton(e)).join(''):'<p class="empty-small">이 조건에 해당하는 월 중 업무가 없습니다.</p>';
     const start=new Date(state.year,state.month-1,1,12);start.setDate(1-start.getDay());
@@ -41,56 +56,67 @@
     for(let i=0;i<cellCount;i++){
       const date=new Date(start);date.setDate(start.getDate()+i);
       const key=C.dateKey(date),inMonth=date.getMonth()+1===state.month, isToday=key===today, selectedDay=key===state.selectedDate;
-      const dayEvents=inMonth?dated.filter(e=>e.date===key):[];
-      cells.push(`<div class="calendar-cell ${inMonth?'':'outside'} ${isToday?'today':''} ${selectedDay?'selected-day':''}"><button class="day-number ${isToday?'today-number':''}" data-date="${key}" aria-label="${formatDate(key)} 일정 보기" ${isToday?'aria-current="date"':''}>${date.getDate()}</button>${dayEvents.slice(0,3).map(e=>eventButton(e,'calendar')).join('')}${dayEvents.length>3?`<button class="more-events" data-date="${key}">+${dayEvents.length-3}건 더 보기</button>`:''}</div>`);
+      const dayEvents=inMonth?dated.filter(e=>C.occursOn(e,key)):[];
+      cells.push(`<div class="calendar-cell ${inMonth?'':'outside'} ${isToday?'today':''} ${selectedDay?'selected-day':''}"><button class="day-number ${isToday?'today-number':''}" data-date="${key}" aria-label="${formatDate(key)} 일정 보기" ${isToday?'aria-current="date"':''}>${date.getDate()}</button>${dayEvents.slice(0,3).map(e=>eventButton(e,'calendar',key)).join('')}${dayEvents.length>3?`<button class="more-events" data-date="${key}">+${dayEvents.length-3}건 더 보기</button>`:''}</div>`);
     }
     $('calendar-grid').innerHTML=cells.join('');
+    $('calendar-surface').hidden=state.mode!=='calendar';$('task-table-panel').hidden=state.mode!=='list';
+    document.querySelector('.calendar-layout').classList.toggle('is-list',state.mode==='list');
+    document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===state.mode);b.setAttribute('aria-pressed',String(b.dataset.mode===state.mode));});
+    renderTaskTable(matched);
     const [title,description,tags]=DATA.focus[state.month-1];
     $('focus-title').textContent=title;$('focus-description').textContent=description;$('focus-tags').innerHTML=tags.map(t=>`<span>${t}</span>`).join('');
     let agenda=dated;
-    if(state.selectedDate)agenda=dated.filter(e=>e.date===state.selectedDate);
+    if(state.selectedDate)agenda=dated.filter(e=>C.occursOn(e,state.selectedDate));
     $('agenda-title').textContent=state.selectedDate?`${Number(state.selectedDate.slice(5,7))}월 ${Number(state.selectedDate.slice(8))}일 일정`:'이달의 날짜별 일정';
     $('agenda-count').textContent=agenda.length;
-    $('agenda-list').innerHTML=(state.selectedDate?'<button class="text-button" id="clear-date">이달 전체 일정 보기</button>':'')+(agenda.length?agenda.map(e=>`<div class="agenda-group"><span class="agenda-date">${formatDate(e.date)}</span>${eventButton(e)}</div>`).join(''):'<div class="empty-agenda"><span>◷</span><p>등록된 날짜 일정이 없습니다.</p><small>월 중 업무를 눌러 날짜를 지정하거나<br>새 일정을 추가해 보세요.</small></div>');
+    $('agenda-list').innerHTML=(state.selectedDate?'<button class="text-button" id="clear-date">이달 전체 일정 보기</button>':'')+(agenda.length?agenda.map(e=>`<div class="agenda-group"><span class="agenda-date">${formatDate(e.date)}</span>${eventButton(e)}</div>`).join(''):'<div class="empty-agenda"><p>등록된 일정이 없습니다.</p><small>업무의 날짜를 지정하거나 일정을 추가하세요.</small></div>');
     const cfg=saved.settings[state.year]||{};
-    $('agm-prompt').querySelector('strong').textContent=cfg.agm?'주총 기준일이 설정됐어요':'주총 준비, 기준일부터';
-    $('agm-prompt').querySelector('small').textContent=cfg.agm?`${cfg.agm.replaceAll('-','.')} · 기준일 수정하기`:'주총일을 입력하면 준비 일정이 생겨요.';
+    $('agm-prompt').querySelector('strong').textContent=cfg.agm?'주총 기준일':'주총 기준일 설정';
+    $('agm-prompt').querySelector('small').textContent=cfg.agm?`${cfg.agm.replaceAll('-','.')} · 기준일 수정`:'주총일에 맞춰 준비 일정을 표시합니다.';
   }
   function renderYear(all){
+    const totals=Array.from({length:12},(_,i)=>filtered(all.filter(e=>e.month===`${state.year}-${C.pad(i+1)}`)).length),max=Math.max(...totals,1);
+    $('year-chart').innerHTML=totals.map((total,i)=>`<button class="chart-month ${i+1===todayDate.getMonth()+1&&state.year===todayDate.getFullYear()?'current':''}" data-month="${i+1}" aria-label="${i+1}월 ${total}건 업무 보기"><span class="bar-value">${total}</span><span class="bar-track"><span class="bar-fill" style="height:${total/max*100}%"></span></span><span class="bar-label">${i+1}<span>월</span></span></button>`).join('');
     $('year-grid').innerHTML=Array.from({length:12},(_,i)=>{
       const month=i+1,list=filtered(all.filter(e=>e.month===`${state.year}-${C.pad(month)}`));
       const counts=DATA.categories.map(c=>({c,count:list.filter(e=>e.category===c.id).length})).filter(v=>v.count);
-      return `<button class="year-card ${month===todayDate.getMonth()+1&&state.year===todayDate.getFullYear()?'current-month':''}" data-month="${month}"><div class="year-card-header"><strong>${month}<span>월</span></strong><span>${list.length}건 <b>↗</b></span></div><h3>${DATA.focus[i][0]}</h3><div class="year-category-list">${counts.map(({c,count})=>`<span><i style="background:${c.color}"></i>${c.label}<b>${count}</b></span>`).join('')||'<p class="muted">검색 결과가 없습니다.</p>'}</div></button>`;
+      return `<button class="year-card ${month===todayDate.getMonth()+1&&state.year===todayDate.getFullYear()?'current-month':''}" data-month="${month}"><div class="year-card-header"><strong>${month}<span>월</span></strong><span>${list.length}건 ${icon('right')}</span></div><h3>${DATA.focus[i][0]}</h3><div class="year-category-list">${counts.map(({c,count})=>`<span><i style="background:${c.color}"></i>${c.label}<b>${count}</b></span>`).join('')||'<p class="muted">검색 결과가 없습니다.</p>'}</div></button>`;
     }).join('');
   }
   function renderGuides(){
     const guides=filtered(DATA.guides);
-    $('guide-grid').innerHTML=guides.map(g=>`<button class="guide-card" data-guide="${g.id}">${badge(g.category)}<h3>${esc(g.title)}<span>↗</span></h3><p>${esc(g.summary)}</p><small>◷ ${esc(g.timing)}</small></button>`).join('')||'<div class="empty-small">일치하는 업무가 없습니다. 검색어나 업무 구분을 바꿔 보세요.</div>';
+    $('guide-grid').innerHTML=`<table class="data-table guide-table"><caption class="sr-only">업무 가이드 ${guides.length}개</caption><thead><tr><th scope="col">업무 안내 <span class="table-total">${guides.length}</span></th><th scope="col">진행 시점</th><th scope="col" class="category-column">업무 구분</th><th scope="col" class="detail-cell"><span class="sr-only">상세 보기</span></th></tr></thead><tbody>${guides.map(g=>`<tr><td><button class="table-task-link" data-guide="${g.id}">${esc(g.title)}</button><p class="table-summary">${esc(g.summary)}</p><small class="mobile-category">${esc(category(g.category).label)}</small></td><td class="guide-timing">${esc(g.timing)}</td><td class="category-column">${badge(g.category)}</td><td class="detail-cell"><button class="icon-button ghost" data-guide="${g.id}" aria-label="${esc(g.title)} 상세 보기">${icon('right')}</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty-table">일치하는 업무가 없습니다. 검색어나 업무 구분을 바꿔 보세요.</td></tr>'}</tbody></table>`;
   }
   function render(){
-    const all=events(),monthEvents=all.filter(e=>e.month===monthKey());
-    renderCategories();renderSummary(monthEvents);
+    const all=events(),monthEvents=C.eventsForMonth(all,monthKey());
+    renderCategories();renderSummary(state.view==='year'?all.filter(e=>e.month.startsWith(String(state.year))):monthEvents);
     $('month-title').textContent=state.view==='calendar'?`${state.year}년 ${state.month}월`:`${state.year}년`;
     const years=new Set(Array.from({length:7},(_,i)=>todayDate.getFullYear()-2+i));years.add(state.year);
     $('year-select').innerHTML=[...years].sort((a,b)=>a-b).map(y=>`<option value="${y}" ${y===state.year?'selected':''}>${y}년</option>`).join('');
-    const viewNames={calendar:'월간 캘린더',year:'연간 한눈에',guide:'업무 가이드'};
+    const viewNames={calendar:'월간 일정',year:'연간 계획',guide:'업무 가이드'};
     $('breadcrumb-title').textContent=viewNames[state.view];
-    $('page-title').textContent={calendar:'공시 일정, 한눈에.',year:'한 해의 흐름을 살펴보세요.',guide:'업무의 다음 순서를 확인하세요.'}[state.view];
-    $('page-description').textContent={calendar:'이번 달 해야 할 일을 확인하고, 다음 공시를 준비하세요.',year:'정기보고부터 주총까지, 반복되는 업무를 월별로 정리했어요.',guide:'인수인계 자료에서 필요한 내용만 간단하게 정리했어요.'}[state.view];
+    $('page-title').textContent={calendar:'공시 캘린더',year:'연간 업무 계획',guide:'업무 가이드'}[state.view];
+    $('page-description').textContent={calendar:'공시 일정과 준비 업무를 한곳에서 관리합니다.',year:'정기보고서부터 주주총회까지, 월별 업무의 흐름을 확인합니다.',guide:'업무별 진행 순서, 준비물과 참고 자료를 확인합니다.'}[state.view];
     document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===state.view);b.setAttribute('aria-pressed',String(b.dataset.view===state.view));});
     for(const view of ['calendar','year','guide'])$(view+'-view').hidden=state.view!==view;
     $('summary-row').hidden=state.view==='guide';
+    $('calendar-mode').hidden=state.view!=='calendar';
+    document.querySelector('.month-controls').hidden=state.view==='guide';
+    document.querySelector('.main-toolbar').classList.toggle('guide-toolbar',state.view==='guide');
     $('prev-btn').hidden=$('next-btn').hidden=$('today-btn').hidden=state.view==='guide';
     const isFiltering=state.category!=='all'||state.query.trim();$('filter-note').hidden=!isFiltering;
     if(isFiltering)$('filter-note').innerHTML=`<span>${state.category!=='all'?esc(category(state.category).label)+' · ':''}${state.query?`“${esc(state.query)}” 검색 중`:'업무 필터 적용 중'}</span><button class="text-button" id="clear-filter">필터 초기화 ×</button>`;
     renderCalendar(monthEvents);renderYear(all);renderGuides();
   }
   function showDialog(id){$(id).showModal();}
+  function closeNavigation(){if($('nav-dialog').open)$('nav-dialog').close();}
+  function restoreControlFocus(selector,key,value){[...document.querySelectorAll(selector)].find(el=>el.dataset[key]===value)?.focus({preventScroll:true});}
   function openDetail(id,isGuide=false){
     selected=isGuide?{...DATA.guides.find(g=>g.id===id),isGuide:true}:events().find(e=>e.id===id);
     if(!selected)return;
     const e=selected;$('detail-category').innerHTML=badge(e.category);
-    $('detail-content').innerHTML=`<h2>${esc(e.title)}</h2><div class="detail-time">◷ ${esc(e.isGuide?e.timing:e.date?formatDate(e.date)+' · '+e.label:e.timing+' · 날짜 미정')}${e.isGuide?'':tag(e)}</div><p class="detail-summary">${esc(e.summary||'직접 등록한 일정입니다.')}</p>${e.steps?.length?`<section class="detail-section"><h3>해야 할 일</h3><ol class="step-list">${e.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></section>`:''}${e.supplies?.length?`<section class="detail-section"><h3>미리 준비할 것</h3><div class="supply-tags">${e.supplies.map(s=>`<span>${esc(s)}</span>`).join('')}</div></section>`:''}${e.partners?`<p class="detail-partners"><strong>함께 확인</strong>${esc(e.partners)}</p>`:''}${e.note?`<div class="detail-note"><strong>확인 메모</strong><p>${esc(e.note)}</p></div>`:''}${e.isGuide?'':`<section class="date-edit"><label for="detail-date">업무 날짜 지정</label><div><input type="date" id="detail-date" value="${esc(e.date||'')}" aria-label="업무 날짜 지정"><button id="save-event-date" class="button small">적용</button>${e.custom?'':'<button id="reset-event-date" class="text-button">기본값</button>'}</div></section>`}<div class="detail-source">참고 · ${esc(e.source||'직접 추가')}${(e.links||[]).map(([label,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`).join('')}</div>${e.custom?'<button id="delete-custom" class="text-button delete-button">이 일정 삭제</button>':''}`;
+    $('detail-content').innerHTML=`<h2>${esc(e.title)}</h2><div class="detail-time">◷ ${esc(e.isGuide?e.timing:e.date?period(e)+' · '+e.label:e.timing+' · 날짜 미정')}${e.isGuide?'':tag(e)}</div><p class="detail-summary">${esc(e.summary||'직접 등록한 일정입니다.')}</p>${e.steps?.length?`<section class="detail-section"><h3>해야 할 일</h3><ol class="step-list">${e.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></section>`:''}${e.supplies?.length?`<section class="detail-section"><h3>미리 준비할 것</h3><div class="supply-tags">${e.supplies.map(s=>`<span>${esc(s)}</span>`).join('')}</div></section>`:''}${e.partners?`<p class="detail-partners"><strong>함께 확인</strong>${esc(e.partners)}</p>`:''}${e.note?`<div class="detail-note"><strong>확인 메모</strong><p>${esc(e.note)}</p></div>`:''}${e.isGuide?'':`<section class="date-edit"><h3>일정 조정</h3><div class="date-edit-fields"><label>시작일<input type="date" id="detail-date" value="${esc(e.date||'')}" aria-label="업무 날짜 지정"></label><label>예상 소요일<input type="number" id="detail-days" min="1" max="30" value="${e.durationDays||1}" aria-label="예상 소요일"></label></div><p class="field-hint">${e.draft?'업무 계획용 초안입니다. ':''}시작일 이후 주말을 건너뜁니다. 공휴일·협조 대기는 별도로 조정하세요.</p><div class="date-edit-actions"><button id="save-event-date" class="button small">일정 저장</button>${e.custom?'':'<button id="reset-event-date" class="text-button">기본안 복원</button>'}</div></section>`}<div class="detail-source">참고 · ${esc(e.source||'직접 추가')}${(e.links||[]).map(([label,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`).join('')}</div>${e.custom?'<button id="delete-custom" class="text-button delete-button">이 일정 삭제</button>':''}`;
     $('detail-done').hidden=Boolean(e.isGuide);$('detail-done').textContent=e.done?'완료 취소':'완료로 표시';
     if(!$('detail-dialog').open)showDialog('detail-dialog');
   }
@@ -112,17 +138,22 @@
   document.addEventListener('click',event=>{
     const button=event.target.closest('button');if(!button)return;
     if(button.hasAttribute('data-close')){button.closest('dialog').close();return;}
-    if(button.dataset.view){state.view=button.dataset.view;state.selectedDate=null;location.hash=state.view;render();return;}
-    if(button.dataset.category){state.category=button.dataset.category;state.selectedDate=null;render();return;}
+    if(button.dataset.view){closeNavigation();state.view=button.dataset.view;state.selectedDate=null;location.hash=state.view;render();return;}
+    if(button.dataset.category){const mobile=$('nav-dialog').open;closeNavigation();state.category=button.dataset.category;state.selectedDate=null;render();if(!mobile)restoreControlFocus('#category-nav [data-category]','category',state.category);return;}
+    if(button.hasAttribute('data-settings')){closeNavigation();openSettings();return;}
+    if(button.hasAttribute('data-storage')){closeNavigation();updateStorageStatus();showDialog('storage-dialog');return;}
+    if(button.dataset.mode){state.mode=button.dataset.mode;render();return;}
+    if(button.dataset.sort){state.descending=state.sort===button.dataset.sort?!state.descending:false;state.sort=button.dataset.sort;render();restoreControlFocus('[data-sort]','sort',state.sort);return;}
+    if(button.dataset.complete){const id=button.dataset.complete;saved.done[id]=!saved.done[id];persist();render();restoreControlFocus('[data-complete]','complete',id);toast(saved.done[id]?'완료로 표시했습니다.':'완료 표시를 취소했습니다.');return;}
     if(button.dataset.event){openDetail(button.dataset.event);return;}
     if(button.dataset.guide){openDetail(button.dataset.guide,true);return;}
     if(button.dataset.month){state.month=Number(button.dataset.month);state.view='calendar';location.hash='calendar';render();return;}
-    if(button.dataset.date){const date=C.parseDate(button.dataset.date);state.year=date.getFullYear();state.month=date.getMonth()+1;state.selectedDate=button.dataset.date;render();return;}
+    if(button.dataset.date){const date=C.parseDate(button.dataset.date);state.year=date.getFullYear();state.month=date.getMonth()+1;state.selectedDate=button.dataset.date;render();restoreControlFocus('[data-date]','date',state.selectedDate);return;}
     if(button.id==='clear-filter'){state.category='all';state.query='';$('search').value='';render();}
     if(button.id==='clear-date'){state.selectedDate=null;render();}
     if(button.id==='save-event-date'&&selected){
-      const date=$('detail-date').value;if(!C.parseDate(date)){toast('올바른 날짜를 입력해 주세요.');return;}
-      if(selected.custom){saved.custom.find(e=>e.id===selected.id).date=date;}else saved.overrides[selected.id]={date};
+      const date=$('detail-date').value,days=Number($('detail-days').value);if(!C.parseDate(date)||!Number.isInteger(days)||days<1||days>30){toast('시작일과 소요일(1~30일)을 확인해 주세요.');return;}
+      if(selected.custom){Object.assign(saved.custom.find(e=>e.id===selected.id),{date,durationDays:days});}else saved.overrides[selected.id]={date,durationDays:days};
       persist();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.selectedDate=null;render();openDetail(selected.id);toast('날짜를 적용했습니다.');
     }
     if(button.id==='reset-event-date'&&selected){delete saved.overrides[selected.id];persist();render();openDetail(selected.id);toast('원래 일정으로 되돌렸습니다.');}
@@ -133,6 +164,7 @@
   $('year-select').addEventListener('change',e=>{state.year=Number(e.target.value);state.selectedDate=null;render();});
   $('search').addEventListener('input',e=>{state.query=e.target.value;render();});
   $('settings-btn').addEventListener('click',openSettings);$('agm-prompt').addEventListener('click',openSettings);
+  $('nav-toggle').addEventListener('click',()=>showDialog('nav-dialog'));
   $('settings-year').addEventListener('change',e=>renderSettingsFields(Number(e.target.value)));
   $('settings-form').addEventListener('submit',e=>{
     e.preventDefault();const cfg={agm:$('agm-date').value,earnings:Array.from({length:4},(_,i)=>$('earnings-'+i).value)};
@@ -147,15 +179,28 @@
   });
   $('add-form').addEventListener('submit',e=>{
     e.preventDefault();const date=$('new-date').value,title=$('new-title').value.trim();if(!C.parseDate(date)||!title){toast('업무명과 날짜를 확인해 주세요.');return;}
-    saved.custom.push({id:'custom-'+crypto.randomUUID(),title,date,category:$('new-category').value,summary:$('new-note').value.trim()});persist();$('add-dialog').close();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.view='calendar';state.selectedDate=null;location.hash='calendar';render();toast('새 일정을 저장했습니다.');
+    saved.custom.push({id:'custom-'+crypto.randomUUID(),title,date,durationDays:C.duration($('new-days').value),category:$('new-category').value,summary:$('new-note').value.trim()});persist();$('add-dialog').close();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.view='calendar';state.selectedDate=null;location.hash='calendar';render();toast('새 일정을 저장했습니다.');
   });
   $('backup-btn').addEventListener('click',()=>{
     const blob=new Blob([JSON.stringify({version:1,exportedAt:today,...saved},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`공시캘린더_내설정_${today}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('내 설정과 완료 상태를 내보냈습니다.');
   });
+  $('export-backup').addEventListener('click',()=>$('backup-btn').click());
+  $('choose-restore').addEventListener('click',()=>$('restore-file').click());
+  $('restore-file').addEventListener('change',async e=>{
+    pendingBackup=null;$('restore-preview').hidden=true;const file=e.target.files[0];if(!file)return;
+    try{if(file.size>2*1024*1024)throw new Error('2MB 이하 백업 파일을 선택해 주세요.');pendingBackup=window.PlannerStorage.validateBackup(JSON.parse(await file.text()));$('restore-summary').textContent=`개인 일정 ${pendingBackup.custom.length}개 · 날짜 변경 ${Object.keys(pendingBackup.overrides).length}개 · 기준일 ${Object.keys(pendingBackup.settings).length}개 연도 · 완료 상태 ${Object.keys(pendingBackup.done).length}개`;$('restore-preview').hidden=false;}
+    catch(error){toast(error instanceof SyntaxError?'JSON 백업 파일을 읽을 수 없습니다.':error.message);}finally{e.target.value='';}
+  });
+  $('confirm-restore').addEventListener('click',()=>{if(!pendingBackup)return;const previous=saved;saved=window.PlannerStorage.merge(saved,pendingBackup);if(!persist()){saved=previous;return;}pendingBackup=null;$('restore-preview').hidden=true;$('storage-dialog').close();render();toast('백업 내용을 합쳐 복원했습니다.');});
   document.addEventListener('keydown',e=>{if(e.key==='/'&&!document.querySelector('dialog[open]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();$('search').focus();}});
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(['calendar','year','guide'].includes(view)){state.view=view;render();}});
   window.addEventListener('storage',e=>{if(e.key===KEY){try{const next=JSON.parse(e.newValue);if(next){saved=next;render();}}catch{}}});
   $('today-label').textContent=`오늘 ${today.replaceAll('-','.')} (${['일','월','화','수','목','금','토'][todayDate.getDay()]})`;
+  $('mobile-view-nav').innerHTML=[['calendar','calendar','월간 일정'],['year','year','연간 계획'],['guide','book','업무 가이드']].map(([view,glyph,label])=>`<button data-view="${view}" class="nav-item">${icon(glyph)}${label}</button>`).join('');
+  document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);});
+  document.querySelectorAll('.dialog-top .icon-button[data-close]').forEach(el=>{el.innerHTML=icon('close');});
+  for(const [id,title] of [['detail-dialog','업무 상세 안내'],['settings-dialog','기준일 설정'],['add-dialog','일정 추가']])$(id).setAttribute('aria-label',title);
+  updateStorageStatus();
   if(['calendar','year','guide'].includes(location.hash.slice(1)))state.view=location.hash.slice(1);
   render();
 })();

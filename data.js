@@ -61,7 +61,32 @@ window.DISCLOSURE_DATA = {
     { id:'membership-renew', category:'other', title:'정기 회원 갱신 확인', timing:'10월 · 갱신 안내 수신 시', summary:'연간 회원 갱신과 관련 비용의 처리 여부를 확인합니다.', steps:['갱신 대상·유지 여부와 안내문 확인','필요한 신청서·날인·결재 준비','담당 부서에 전달하고 갱신 완료 확인'], supplies:['갱신 안내', '재가입 신청서'], partners:'인사 · 재경 · 관련 기관', note:'가입 유지 여부는 내부 의사결정을 먼저 확인합니다.', source:'기타업무 인수인계 25–26쪽' },
     { id:'ir-meeting', category:'earnings', title:'IR 미팅·홈페이지 자료 관리', timing:'미팅·공시 후 수시', summary:'미팅을 기록하고 공개 가능한 자료의 게시 상태를 확인합니다.', steps:['내부 IR 게시판에 미팅 일정·결과 기록','공개된 사실을 기준으로 질의 대응','정기보고서·전자공고·게시 대상 자료 확인'], supplies:['공개 자료', '미팅 기록'], partners:'IR · 홍보 · 관련 부서', note:'미공개 수치나 계약상 제한된 정보는 외부 공유 대상에서 제외합니다.', source:'기타업무 인수인계 11–14쪽 · 보충 문서' }
   ],
-  /* 월 중 업무는 특정 날짜에 임의로 고정하지 않습니다. */
+  /* 아래 기간은 사용자가 요청한 업무 계획 초안이며 원문에 명시된 소요일·법정기한이 아닙니다. */
+  planning: {
+    'monthly-admin': {day:25, days:1},
+    'collect': {day:1, days:7},
+    'quarter-report': {day:3, days:5},
+    'disclosure-check': {day:2, days:2},
+    'earnings-plan': {day:5, days:2},
+    'earnings-data': {day:12, days:5},
+    'quarterly-admin': {day:20, days:1},
+    'ownership-check': {day:15, days:2},
+    'dividend-review': {day:16, days:4},
+    'agm-agenda': {day:23, days:3},
+    'record-date': {day:7, days:2},
+    'yearend-register': {day:12, days:3},
+    'annual-fees': {day:15, days:1},
+    'closing-board': {day:3, days:5},
+    'agm-board': {day:10, days:3},
+    'evote-setup': {day:8, days:2},
+    'audit-report': {day:8, days:3},
+    'annual-report': {day:8, days:7},
+    'association-fees': {day:15, days:1},
+    'share-register': {day:8, days:2},
+    'pledge': {day:8, days:2},
+    'governance': {day:8, days:8},
+    'membership-renew': {day:12, days:2}
+  },
   monthRules: [
     { guide:'monthly-admin', months:[1,2,3,4,5,6,7,8,9,10,11,12] },
     { guide:'collect', months:[1,4,7,10] },

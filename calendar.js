@@ -19,6 +19,20 @@
     const value = type => parts.find(p=>p.type===type).value;
     return `${value('year')}-${value('month')}-${value('day')}`;
   }
+  function duration(value) {return Number.isInteger(Number(value))&&Number(value)>=1&&Number(value)<=30?Number(value):1;}
+  function nextWeekday(value) {
+    const date=parseDate(value);if(!date)return null;
+    while([0,6].includes(date.getDay()))date.setDate(date.getDate()+1);
+    return dateKey(date);
+  }
+  function workDates(start,days=1) {
+    const date=parseDate(start);if(!date)return [];
+    const dates=[dateKey(date)];
+    while(dates.length<duration(days)){date.setDate(date.getDate()+1);if(![0,6].includes(date.getDay()))dates.push(dateKey(date));}
+    return dates;
+  }
+  function occursOn(event,key){return workDates(event.date,event.durationDays).includes(key);}
+  function eventsForMonth(events,month){return events.filter(e=>e.date?workDates(e.date,e.durationDays).some(date=>date.startsWith(month)):e.month===month);}
   function eventsForYear(data, year, saved={}) {
     const settings=saved.settings||{}, overrides=saved.overrides||{}, done=saved.done||{};
     const years = new Set([year-1,year,year+1]);
@@ -29,17 +43,23 @@
     function add(event) {
       const guide=guides.get(event.guide);
       const originalDate=event.date||null;
+      event.durationDays=duration(event.durationDays);
+      const originalDurationDays=event.durationDays;
       const override=overrides[event.id];
       if(override && parseDate(override.date)) {
-        event.date=override.date; event.month=event.date.slice(0,7); event.label='직접 지정한 날짜'; event.confirmed=true;
+        event.date=override.date; event.month=event.date.slice(0,7); event.label='직접 저장한 일정'; event.confirmed=true;event.draft=false;
       }
-      events.push({...guide,...event,originalDate,done:Boolean(done[event.id])});
+      if(override?.durationDays!==undefined)event.durationDays=duration(override.durationDays);
+      event.endDate=workDates(event.date,event.durationDays).at(-1)||null;
+      events.push({...guide,...event,originalDate,originalDurationDays,done:Boolean(done[event.id])});
     }
     for(const y of years) {
       const cfg=settings[y]||{};
       for(const rule of data.monthRules) for(const month of rule.months) {
         if(rule.unlessAgm && parseDate(cfg.agm)) continue;
-        add({id:`month-${y}-${pad(month)}-${rule.guide}`,guide:rule.guide,date:null,month:`${y}-${pad(month)}`,label:'월 중 진행',confirmed:false});
+        const plan=data.planning?.[rule.guide];
+        const date=plan?nextWeekday(`${y}-${pad(month)}-${pad(plan.day)}`):null;
+        add({id:`month-${y}-${pad(month)}-${rule.guide}`,guide:rule.guide,date,month:`${y}-${pad(month)}`,durationDays:plan?.days||1,label:plan?'준비 일정 초안':'월 중 진행',draft:Boolean(plan),confirmed:false});
       }
       for(const rule of data.dateRules) add({id:`date-${y}-${rule.month}-${rule.guide}`,guide:rule.guide,date:`${y}-${pad(rule.month)}-${pad(rule.day)}`,month:`${y}-${pad(rule.month)}`,title:rule.title,label:rule.label,confirmed:false});
       if(parseDate(cfg.agm)) for(const rule of data.agmRules) {
@@ -55,11 +75,11 @@
         }
       });
     }
-    for(const event of saved.custom||[]) if(parseDate(event.date)) events.push({...event,month:event.date.slice(0,7),originalDate:event.date,confirmed:true,label:'직접 추가',done:Boolean(done[event.id]),custom:true,steps:[],supplies:[],source:'직접 추가한 일정'});
+    for(const event of saved.custom||[]) if(parseDate(event.date)) events.push({...event,month:event.date.slice(0,7),originalDate:event.date,durationDays:duration(event.durationDays),endDate:workDates(event.date,event.durationDays).at(-1),confirmed:true,label:'직접 추가',done:Boolean(done[event.id]),custom:true,steps:[],supplies:[],source:'직접 추가한 일정'});
     return events.sort((a,b)=>(a.date||a.month+'-99').localeCompare(b.date||b.month+'-99')||a.title.localeCompare(b.title,'ko'));
   }
   function matches(event,category,query) {
     return (category==='all'||event.category===category) && (!query||[event.title,event.summary,event.timing,...event.steps||[],...event.supplies||[]].join(' ').toLocaleLowerCase('ko').includes(query.trim().toLocaleLowerCase('ko')));
   }
-  root.CalendarCore={pad,dateKey,parseDate,shiftDate,todaySeoul,eventsForYear,matches};
+  root.CalendarCore={pad,dateKey,parseDate,shiftDate,todaySeoul,duration,nextWeekday,workDates,occursOn,eventsForMonth,eventsForYear,matches};
 })(typeof window==='undefined'?globalThis:window);
