@@ -8,14 +8,47 @@
   const badge=id=>{const c=category(id);return `<span class="category-badge" style="--category:${c.color};--soft:${c.soft}"><i></i>${esc(c.label)}</span>`;};
   const today=C.todaySeoul(), todayDate=C.parseDate(today);
   const state={year:todayDate.getFullYear(),month:todayDate.getMonth()+1,view:'calendar',category:'all',query:'',selectedDate:null,mode:'calendar',sort:'date',descending:false};
-  let saved={settings:{},overrides:{},done:{},custom:[]}, selected=null, settingsYear=state.year, toastTimer, storageAvailable=true, pendingBackup=null;
-  try {
-    const value=JSON.parse(localStorage.getItem(KEY)||'null');
-    if(value&&typeof value==='object') saved={settings:value.settings||{},overrides:value.overrides||{},done:value.done||{},custom:Array.isArray(value.custom)?value.custom:[]};
-  } catch { storageAvailable=false; }
-  function toast(message) { $('toast').textContent=message+(!storageAvailable?' (브라우저 저장 불가 · 현재 화면에만 유지)':'');$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4500); }
-  function updateStorageStatus(){document.querySelectorAll('[data-storage-label]').forEach(el=>{el.textContent=storageAvailable?'이 브라우저에 자동 저장':'브라우저 저장 불가';});$('storage-status').textContent=storageAvailable?'이 브라우저에 자동 저장 중':'저장 불가 · 백업 파일을 내려받으세요';}
-  function persist() {try {localStorage.setItem(KEY,JSON.stringify(saved));storageAvailable=true;updateStorageStatus();return true;}catch{storageAvailable=false;updateStorageStatus();toast('변경 내용을 저장하지 못했습니다.');return false;}}
+  const cloud=window.PlannerCloud, empty=window.PlannerSyncCore.empty;
+  let saved=empty(),selected=null,settingsYear=state.year,toastTimer,pendingBackup=null,legacy=null;
+  let phase='loading',dirty=false,cloudError='',account=null,loadGeneration=0;
+  try {const value=JSON.parse(localStorage.getItem(KEY)||'null');if(value)legacy=window.PlannerStorage.validateBackup({version:1,...value});}catch{/* Legacy data can still be imported from a backup. */}
+  function toast(message) { $('toast').textContent=message;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4500); }
+  function updateStorageStatus(){
+    const labels={loading:'DB 불러오는 중',signedOut:'로그인하여 DB 저장',ready:'DB에 저장됨',saving:'DB 저장 중…',error:dirty?'DB 미저장 · 재시도 필요':'DB 연결 확인 필요'};
+    document.querySelectorAll('[data-storage-label]').forEach(el=>{el.textContent=labels[phase];});
+    $('storage-status').textContent=labels[phase];$('sync-message').textContent=cloudError||({loading:'일정을 불러오고 있습니다.',signedOut:'기존 Supabase 앱 계정으로 로그인하세요.',ready:'일정·완료 상태·기준일을 DB에서 불러왔습니다.',saving:'변경 내용을 DB로 전송하고 있습니다.'}[phase]||'');
+    $('account-email').textContent=account?.email||'';
+    $('login-form').hidden=!!account||phase==='loading';$('account-panel').hidden=!account;
+    $('sync-retry').hidden=phase!=='error';$('sync-reload').hidden=!account||!dirty||phase==='saving';
+    $('sync-refresh').hidden=!account||phase!=='ready';$('logout-btn').disabled=dirty||['saving','loading'].includes(phase);
+    $('legacy-import').hidden=!legacy||!account;$('legacy-import').disabled=phase!=='ready';
+    $('confirm-restore').disabled=phase!=='ready';
+    $('login-submit').disabled=phase==='loading';
+  }
+  function canEdit(){
+    if(phase==='ready')return true;
+    if(phase==='signedOut'){updateStorageStatus();if(!document.querySelector('dialog[open]'))showDialog('storage-dialog');toast('먼저 로그인하면 DB에 저장할 수 있습니다.');}
+    else toast(phase==='saving'?'DB 저장이 끝난 뒤 다시 시도해 주세요.':'저장·백업에서 DB 연결을 확인해 주세요.');
+    return false;
+  }
+  async function persist(){
+    const owner=account?.id;
+    dirty=true;phase='saving';cloudError='';updateStorageStatus();
+    try{await cloud.save(saved);if(account?.id!==owner)return false;dirty=false;phase='ready';toast('DB에 저장했습니다.');return true;}
+    catch(error){if(account?.id!==owner)return false;phase='error';cloudError=error.code==='40001'?'다른 기기에서 같은 업무를 변경했습니다. 현재 내용을 백업한 뒤 DB 다시 불러오기를 선택하세요.':'DB에 저장하지 못했습니다. 현재 내용은 이 화면에 남아 있습니다. 연결을 확인하고 재시도하거나 백업하세요.';toast(cloudError);return false;}
+    finally{updateStorageStatus();}
+  }
+  async function loadAccount(user){
+    const generation=++loadGeneration;
+    pendingBackup=null;$('restore-preview').hidden=true;
+    account=user;phase='loading';cloudError='';saved=empty();dirty=false;updateStorageStatus();
+    for(const id of ['detail-dialog','add-dialog','settings-dialog'])if($(id).open)$(id).close();
+    render();
+    if(!user){phase='signedOut';updateStorageStatus();return;}
+    try{const next=await cloud.load();if(generation!==loadGeneration)return;saved=next;phase='ready';render();}
+    catch{if(generation!==loadGeneration)return;phase='error';cloudError='DB를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.';}
+    updateStorageStatus();
+  }
   function monthKey(){return `${state.year}-${C.pad(state.month)}`;}
   function events(){return C.eventsForYear(DATA,state.year,saved);}
   function filtered(list){return list.filter(e=>C.matches(e,state.category,state.query));}
@@ -135,7 +168,7 @@
     else {const date=new Date(state.year,state.month-1+offset,1);state.year=date.getFullYear();state.month=date.getMonth()+1;}
     state.selectedDate=null;render();
   }
-  document.addEventListener('click',event=>{
+  document.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button)return;
     if(button.hasAttribute('data-close')){button.closest('dialog').close();return;}
     if(button.dataset.view){closeNavigation();state.view=button.dataset.view;state.selectedDate=null;location.hash=state.view;render();return;}
@@ -144,7 +177,7 @@
     if(button.hasAttribute('data-storage')){closeNavigation();updateStorageStatus();showDialog('storage-dialog');return;}
     if(button.dataset.mode){state.mode=button.dataset.mode;render();return;}
     if(button.dataset.sort){state.descending=state.sort===button.dataset.sort?!state.descending:false;state.sort=button.dataset.sort;render();restoreControlFocus('[data-sort]','sort',state.sort);return;}
-    if(button.dataset.complete){const id=button.dataset.complete;saved.done[id]=!saved.done[id];persist();render();restoreControlFocus('[data-complete]','complete',id);toast(saved.done[id]?'완료로 표시했습니다.':'완료 표시를 취소했습니다.');return;}
+    if(button.dataset.complete){if(!canEdit())return;const id=button.dataset.complete;saved.done[id]=!saved.done[id];render();await persist();restoreControlFocus('[data-complete]','complete',id);return;}
     if(button.dataset.event){openDetail(button.dataset.event);return;}
     if(button.dataset.guide){openDetail(button.dataset.guide,true);return;}
     if(button.dataset.month){state.month=Number(button.dataset.month);state.view='calendar';location.hash='calendar';render();return;}
@@ -152,12 +185,13 @@
     if(button.id==='clear-filter'){state.category='all';state.query='';$('search').value='';render();}
     if(button.id==='clear-date'){state.selectedDate=null;render();}
     if(button.id==='save-event-date'&&selected){
+      if(!canEdit())return;
       const date=$('detail-date').value,days=Number($('detail-days').value);if(!C.parseDate(date)||!Number.isInteger(days)||days<1||days>30){toast('시작일과 소요일(1~30일)을 확인해 주세요.');return;}
       if(selected.custom){Object.assign(saved.custom.find(e=>e.id===selected.id),{date,durationDays:days});}else saved.overrides[selected.id]={date,durationDays:days};
-      persist();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.selectedDate=null;render();openDetail(selected.id);toast('날짜를 적용했습니다.');
+      state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.selectedDate=null;render();openDetail(selected.id);await persist();
     }
-    if(button.id==='reset-event-date'&&selected){delete saved.overrides[selected.id];persist();render();openDetail(selected.id);toast('원래 일정으로 되돌렸습니다.');}
-    if(button.id==='delete-custom'&&selected){saved.custom=saved.custom.filter(e=>e.id!==selected.id);delete saved.done[selected.id];persist();$('detail-dialog').close();render();toast('일정을 삭제했습니다.');}
+    if(button.id==='reset-event-date'&&selected){if(!canEdit())return;delete saved.overrides[selected.id];render();openDetail(selected.id);await persist();}
+    if(button.id==='delete-custom'&&selected){if(!canEdit())return;saved.custom=saved.custom.filter(e=>e.id!==selected.id);delete saved.done[selected.id];$('detail-dialog').close();render();await persist();}
   });
   $('prev-btn').addEventListener('click',()=>navigate(-1));$('next-btn').addEventListener('click',()=>navigate(1));
   $('today-btn').addEventListener('click',()=>{state.year=todayDate.getFullYear();state.month=todayDate.getMonth()+1;state.selectedDate=null;render();});
@@ -166,20 +200,21 @@
   $('settings-btn').addEventListener('click',openSettings);$('agm-prompt').addEventListener('click',openSettings);
   $('nav-toggle').addEventListener('click',()=>showDialog('nav-dialog'));
   $('settings-year').addEventListener('change',e=>renderSettingsFields(Number(e.target.value)));
-  $('settings-form').addEventListener('submit',e=>{
-    e.preventDefault();const cfg={agm:$('agm-date').value,earnings:Array.from({length:4},(_,i)=>$('earnings-'+i).value)};
-    saved.settings[settingsYear]=cfg;persist();$('settings-dialog').close();state.year=settingsYear;state.selectedDate=null;render();toast('기준일과 준비 일정을 저장했습니다.');
+  $('settings-form').addEventListener('submit',async e=>{
+    e.preventDefault();if(!canEdit())return;const cfg={agm:$('agm-date').value,earnings:Array.from({length:4},(_,i)=>$('earnings-'+i).value)};
+    saved.settings[settingsYear]=cfg;$('settings-dialog').close();state.year=settingsYear;state.selectedDate=null;render();await persist();
   });
-  $('detail-done').addEventListener('click',()=>{if(!selected||selected.isGuide)return;saved.done[selected.id]=!saved.done[selected.id];persist();render();openDetail(selected.id);toast(saved.done[selected.id]?'완료로 표시했습니다.':'완료 표시를 취소했습니다.');});
+  $('detail-done').addEventListener('click',async()=>{if(!selected||selected.isGuide||!canEdit())return;saved.done[selected.id]=!saved.done[selected.id];render();openDetail(selected.id);await persist();});
   $('add-btn').addEventListener('click',()=>{
+    if(!canEdit())return;
     $('add-form').reset();$('new-date').value=state.selectedDate||(monthKey()===today.slice(0,7)?today:monthKey()+'-01');
     $('new-category').innerHTML=DATA.categories.map(c=>`<option value="${c.id}">${c.label}</option>`).join('');
     if(state.category!=='all')$('new-category').value=state.category;
     showDialog('add-dialog');
   });
-  $('add-form').addEventListener('submit',e=>{
-    e.preventDefault();const date=$('new-date').value,title=$('new-title').value.trim();if(!C.parseDate(date)||!title){toast('업무명과 날짜를 확인해 주세요.');return;}
-    saved.custom.push({id:'custom-'+crypto.randomUUID(),title,date,durationDays:C.duration($('new-days').value),category:$('new-category').value,summary:$('new-note').value.trim()});persist();$('add-dialog').close();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.view='calendar';state.selectedDate=null;location.hash='calendar';render();toast('새 일정을 저장했습니다.');
+  $('add-form').addEventListener('submit',async e=>{
+    e.preventDefault();if(!canEdit())return;const date=$('new-date').value,title=$('new-title').value.trim();if(!C.parseDate(date)||!title){toast('업무명과 날짜를 확인해 주세요.');return;}
+    saved.custom.push({id:'custom-'+crypto.randomUUID(),title,date,durationDays:C.duration($('new-days').value),category:$('new-category').value,summary:$('new-note').value.trim()});$('add-dialog').close();state.year=Number(date.slice(0,4));state.month=Number(date.slice(5,7));state.view='calendar';state.selectedDate=null;location.hash='calendar';render();await persist();
   });
   $('backup-btn').addEventListener('click',()=>{
     const blob=new Blob([JSON.stringify({version:1,exportedAt:today,...saved},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`공시캘린더_내설정_${today}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('내 설정과 완료 상태를 내보냈습니다.');
@@ -191,10 +226,21 @@
     try{if(file.size>2*1024*1024)throw new Error('2MB 이하 백업 파일을 선택해 주세요.');pendingBackup=window.PlannerStorage.validateBackup(JSON.parse(await file.text()));$('restore-summary').textContent=`개인 일정 ${pendingBackup.custom.length}개 · 날짜 변경 ${Object.keys(pendingBackup.overrides).length}개 · 기준일 ${Object.keys(pendingBackup.settings).length}개 연도 · 완료 상태 ${Object.keys(pendingBackup.done).length}개`;$('restore-preview').hidden=false;}
     catch(error){toast(error instanceof SyntaxError?'JSON 백업 파일을 읽을 수 없습니다.':error.message);}finally{e.target.value='';}
   });
-  $('confirm-restore').addEventListener('click',()=>{if(!pendingBackup)return;const previous=saved;saved=window.PlannerStorage.merge(saved,pendingBackup);if(!persist()){saved=previous;return;}pendingBackup=null;$('restore-preview').hidden=true;$('storage-dialog').close();render();toast('백업 내용을 합쳐 복원했습니다.');});
+  $('confirm-restore').addEventListener('click',async()=>{if(!pendingBackup||!canEdit())return;saved=window.PlannerStorage.merge(saved,pendingBackup);pendingBackup=null;$('restore-preview').hidden=true;render();await persist();});
+  $('login-form').addEventListener('submit',async e=>{
+    e.preventDefault();phase='loading';cloudError='';updateStorageStatus();
+    try{await cloud.login($('login-email').value.trim(),$('login-password').value);$('login-password').value='';}
+    catch{phase='signedOut';cloudError='로그인하지 못했습니다. 이메일·비밀번호 또는 네트워크 연결을 확인하세요.';updateStorageStatus();}
+  });
+  $('logout-btn').addEventListener('click',async()=>{if(dirty)return;try{await cloud.logout();}catch{toast('로그아웃하지 못했습니다. 연결을 확인해 주세요.');}});
+  $('sync-retry').addEventListener('click',async()=>{if(dirty)await persist();else if(account)await loadAccount(account);else{phase='loading';updateStorageStatus();try{await loadAccount(await cloud.init(loadAccount));}catch{phase='error';cloudError='로그인 연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.';updateStorageStatus();}}});
+  $('sync-refresh').addEventListener('click',()=>loadAccount(cloud.user));
+  $('sync-reload').addEventListener('click',()=>{if(confirm('DB에 저장하지 못한 현재 변경을 버리고 최신 DB 내용을 불러올까요?'))loadAccount(cloud.user);});
+  $('legacy-import').addEventListener('click',async()=>{if(!legacy||!canEdit())return;saved=window.PlannerStorage.merge(saved,legacy);render();if(await persist()){legacy=null;updateStorageStatus();}});
   document.addEventListener('keydown',e=>{if(e.key==='/'&&!document.querySelector('dialog[open]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();$('search').focus();}});
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(['calendar','year','guide'].includes(view)){state.view=view;render();}});
-  window.addEventListener('storage',e=>{if(e.key===KEY){try{const next=JSON.parse(e.newValue);if(next){saved=next;render();}}catch{}}});
+  window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+  window.addEventListener('focus',()=>{if(account&&phase==='ready'&&!dirty&&!document.querySelector('dialog[open]'))loadAccount(account);});
   $('today-label').textContent=`오늘 ${today.replaceAll('-','.')} (${['일','월','화','수','목','금','토'][todayDate.getDay()]})`;
   $('mobile-view-nav').innerHTML=[['calendar','calendar','월간 일정'],['year','year','연간 계획'],['guide','book','업무 가이드']].map(([view,glyph,label])=>`<button data-view="${view}" class="nav-item">${icon(glyph)}${label}</button>`).join('');
   document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);});
@@ -203,4 +249,5 @@
   updateStorageStatus();
   if(['calendar','year','guide'].includes(location.hash.slice(1)))state.view=location.hash.slice(1);
   render();
+  cloud.init(loadAccount).then(loadAccount).catch(()=>{phase='error';cloudError='로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.';updateStorageStatus();});
 })();

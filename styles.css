@@ -87,3 +87,14 @@ form>label,.date-fields>label{display:flex;flex-direction:column;gap:8px;font-si
 @media(max-width:639px){.date-edit .date-edit-fields{grid-template-columns:minmax(0,1fr) 90px}.date-edit-fields input{width:100%}.storage-facts{font-size:12px}}
 
 .calendar-event>span:nth-child(2){word-break:keep-all;overflow-wrap:anywhere}
+
+/* Account and database state use the existing compact dialog vocabulary. */
+.sync-message{padding:11px 13px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+#login-form{margin-bottom:24px}#login-submit{margin-top:18px;width:100%}
+.account-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:20px 0 12px;font-size:13px}
+#account-email{overflow-wrap:anywhere;min-width:0}.account-row .button{flex-shrink:0}
+#storage-dialog .storage-facts{border-top:1px solid var(--border);padding-top:20px;margin-top:20px}
+#legacy-panel{margin-top:20px}#legacy-panel:has(button[hidden]){display:none}
+.backup-section{border-top:1px solid var(--border);margin-top:24px;padding-top:20px}
+.backup-section .storage-buttons{margin-top:14px}
+.storage-buttons:not(:has(button:not([hidden]))){display:none}

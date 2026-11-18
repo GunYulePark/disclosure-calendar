@@ -1,4 +1,4 @@
-/* Browser-local backup validation. Imported files never execute code or go to a server. */
+/* Backup validation shared by file imports, legacy migration, and DB loads. */
 ((root)=>{
   const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
   const safeKey=key=>/^[a-zA-Z0-9_-]{1,150}$/.test(key)&&!['__proto__','constructor','prototype'].includes(key);

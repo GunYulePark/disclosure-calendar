@@ -1,0 +1,11 @@
+{
+  "name": "disclosure-calendar",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build:sdk": "esbuild sdk-entry.js --bundle --minify --format=iife --global-name=PlannerSupabase --outfile=vendor/supabase.js --legal-comments=eof",
+    "test": "node --test tests/*.test.cjs"
+  },
+  "dependencies": { "@supabase/supabase-js": "2.119.0" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}
