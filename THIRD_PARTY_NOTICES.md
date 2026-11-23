@@ -1,5 +1,7 @@
 # Third party design references
 
+The server-only approval function imports Nodemailer **10.6.1** (MIT, copyright Andris Reinman) for Gmail SMTP. [Source](https://github.com/nodemailer/nodemailer), [license](licenses/nodemailer-MIT.txt). It is never bundled in browser code. Playwright **1.65.1** is a development-only browser validation dependency pinned in the lockfile.
+
 This project adapts design and implementation patterns from the following MIT-licensed projects. It does not bundle their React, Radix, TanStack, Tailwind, chart libraries, sample datasets, brand assets, or fonts. The interface is implemented in the project's existing HTML, CSS and JavaScript stack.
 
 | Project | Author | Reference | License text |

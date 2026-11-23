@@ -2,11 +2,15 @@
 (() => {
   const core=window.PlannerSyncCore;
   const client=window.PlannerSupabase.createClient(window.PLANNER_DB.url,window.PLANNER_DB.publishableKey,{
-    auth:{storageKey:'disclosure-calendar-auth',persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}
+    auth:{storageKey:'disclosure-calendar-approved-auth',persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}
   });
   let user=null,baseline=core.empty(),versions=new Map();
+  async function access(){
+    const {data,error}=await client.rpc('disclosure_calendar_access_status');if(error)throw error;return data;
+  }
   async function load(){
     const rows=[],owner=user?.id;if(!owner)throw new Error('로그인이 필요합니다.');
+    const status=await access();if(status!=='approved')throw Object.assign(new Error('이용 승인이 필요합니다.'),{code:'ACCESS_'+status.toUpperCase()});
     for(let start=0;;start+=1000){
       const {data,error}=await client.from('disclosure_calendar_entries').select('kind,item_key,value,version').eq('user_id',owner).order('kind').order('item_key').range(start,start+999);
       if(error)throw error;
@@ -29,7 +33,12 @@
     }
     return structuredClone(baseline);
   }
-  window.PlannerCloud={load,save,client,get user(){return user;},
+  async function mailRequest(action){
+    const {data,error}=await client.functions.invoke('calendar-access',{body:{action},timeout:action==='readiness'?10000:45000});
+    if(error){let message='메일 연결을 확인하지 못했습니다.';try{message=(await error.context.json()).error||message;}catch{}throw new Error(message);}
+    return data;
+  }
+  window.PlannerCloud={load,save,client,access,mailReadiness:()=>mailRequest('readiness'),requestApproval:()=>mailRequest('request'),get user(){return user;},
     async init(onAuth){
       const {data,error}=await client.auth.getSession();if(error)throw error;
       user=data.session?.user||null;
@@ -40,6 +49,9 @@
       return user;
     },
     async login(email,password){const {error}=await client.auth.signInWithPassword({email,password});if(error)throw error;},
+    async signup(email,password){
+      const {error}=await client.auth.signUp({email,password,options:{emailRedirectTo:'https://gunyulepark.github.io/disclosure-calendar/'}});if(error)throw error;
+    },
     async logout(){const {error}=await client.auth.signOut({scope:'local'});if(error)throw error;}
   };
 })();

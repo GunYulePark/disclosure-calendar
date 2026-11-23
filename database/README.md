@@ -1,19 +1,19 @@
-# 계정별 공시 캘린더 DB
+# 공시 캘린더 전용 DB
 
-연결된 기존 Supabase 프로젝트 `zyagwjbntxtihppagtkk` (서울)에 전용 네임스페이스를 추가했다. 기존 P/L 테이블·정책·Auth 설정은 변경하지 않았다.
+현재 프로젝트: `vkfdnrqpnzehowsbjmuf` / disclosure-calendar / TEST / 서울. 기존 재무 앱과 Auth·테이블·함수를 분리했다. 사용자별 물리 DB 대신 같은 프로젝트 안의 user_id 기반 데이터 공간을 RLS로 격리한다.
 
-- `public.disclosure_calendar_entries`: 사용자 UUID, 항목 종류(settings/overrides/done/custom), 안정적인 업무 키, JSON 값, 버전, 수정일. 복합 PK의 선두 user_id로 계정별 조회를 지원한다.
-- `public.disclosure_calendar_apply(jsonb)`: SECURITY INVOKER. 변경 항목을 하나의 트랜잭션으로 적용한다. 버전이 다르면 40001로 전체 취소한다. 삭제는 null tombstone으로 남겨 오래된 탭에서의 복원을 방지한다.
-- RLS: SELECT/INSERT/UPDATE 모두 `(select auth.uid()) = user_id`. UPDATE는 USING과 WITH CHECK를 모두 적용했다. 익명 읽기·쓰기와 직접 DELETE를 허용하지 않는다.
-- 프론트엔드는 publishable key만 사용한다. 개인 데이터는 GitHub에 커밋하지 않는다. SDK가 로그인 세션 갱신을 관리한다.
+적용 SQL 검토 원본(이미 적용된 DB에서 그대로 재실행하지 않는다):
 
-`calendar-schema.sql`은 적용된 최종 스키마의 검토용 원본이다. 이미 적용된 운영 DB에서 그대로 재실행하지 않는다. 호스팅 DB에 MCP apply_migration으로 `create_disclosure_calendar_sync`, `enforce_calendar_version_for_missing_rows` 두 이력을 적용했다. 향후 스키마 변경은 Supabase CLI `migration new` 또는 연결 도구의 마이그레이션 기능을 사용한다.
+1. `calendar-schema.sql`: 일정·버전·트랜잭션 RPC.
+2. `approval-schema.sql`: 서버 관리 승인 상태와 RLS, 비공개 토큰·감사 기록·메일 제한·승인 함수.
+3. `approval-server-config.sql`: 수신자·사이트 주소의 서버 전용 설정. 실제 값은 별도 서버 작업으로 입력하고 저장소에 넣지 않는다.
+4. `approval-write-gate.sql`: 빈 변경까지 포함해 모든 쓰기에 승인을 요구한다.
+5. `calendar-capacity.sql`: 계정별 행 수·항목 크기 제한.
 
-## 검증 (2026-11-18)
+호스팅 DB 변경은 MCP apply_migration으로 이력에 남겼다. 위 파일은 최종 상태의 검토 원본이며, 이후 변경도 마이그레이션으로 관리한다. Auth 테이블 권한은 확장하지 않았다.
 
-- authenticated 역할과 JWT claim으로 RPC 생성→조회→변경→삭제 tombstone, 오래된 버전 거부, 다른 사용자 claim에서 비노출을 검증했다. 트랜잭션을 rollback하여 검증 데이터는 남기지 않았다.
-- anon 테이블 SELECT·RPC 실행 권한 없음 확인. 새 테이블 RLS 활성화. 새 함수는 invoker이며 빈 search_path를 사용한다.
-- 보안 advisor에 새 캘린더 테이블·함수 관련 지적은 없었다. 기존 다른 앱 함수의 SECURITY DEFINER 공개 실행 경고와 프로젝트의 유출 비밀번호 보호 비활성 경고는 이번 범위에서 변경하지 않았다. [함수 권한 안내](https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable), [비밀번호 보호 안내](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
-- 기존 앱 계정의 비밀번호를 제공받지 않았으므로 실제 브라우저 로그인 후 저장·기기 간 재접속 검증은 미실시. 사용자 로그인 이후 확인이 필요하다. 비밀번호를 코드나 대화에 저장하지 않는다.
+개인 일정은 본인 user_id + approved 상태를 요구한다. 회원 상태는 본인 읽기만 허용하고 서버만 수정한다. 승인 RPC는 SECURITY INVOKER, 빈 search_path, service_role 실행 권한만 사용한다. 비공개 테이블은 RLS와 ACL로 잠그고 service_role만 접근한다. 비공개 서버 전용 테이블에서 RLS 사용자 정책이 없다는 advisor INFO는 의도된 구성이다. [안내](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy).
 
-공식 자료: [비밀번호 로그인](https://supabase.com/docs/reference/javascript/auth-signinwithpassword), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [변경 이력](https://supabase.com/changelog.md).
+`tests/approval.integration.sql`은 실제 Auth fixture를 트랜잭션 안에서 만들고 모두 롤백하는 DB 검사다. 실제 메일은 보내지 않는다. 상세 결과와 남은 설정은 [SECURITY.md](../SECURITY.md)에 있다.
+
+이전 공유 프로젝트의 개인 캘린더 행은 0개였다. 전환 후 캘린더 테이블·RPC의 일반 사용자 권한은 폐쇄하며 재무 앱의 테이블·정책·함수는 변경하지 않는다.

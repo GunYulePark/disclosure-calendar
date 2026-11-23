@@ -10,24 +10,29 @@
   const state={year:todayDate.getFullYear(),month:todayDate.getMonth()+1,view:'calendar',category:'all',query:'',selectedDate:null,mode:'calendar',sort:'date',descending:false};
   const cloud=window.PlannerCloud, empty=window.PlannerSyncCore.empty;
   let saved=empty(),selected=null,settingsYear=state.year,toastTimer,pendingBackup=null,legacy=null;
-  let phase='loading',dirty=false,cloudError='',account=null,loadGeneration=0;
+  let phase='loading',dirty=false,cloudError='',account=null,loadGeneration=0,authMode='login',mailReady=false,approvalNotifiedFor=null,approvalSending=false;
   try {const value=JSON.parse(localStorage.getItem(KEY)||'null');if(value)legacy=window.PlannerStorage.validateBackup({version:1,...value});}catch{/* Legacy data can still be imported from a backup. */}
   function toast(message) { $('toast').textContent=message;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4500); }
   function updateStorageStatus(){
-    const labels={loading:'DB 불러오는 중',signedOut:'로그인하여 DB 저장',ready:'DB에 저장됨',saving:'DB 저장 중…',error:dirty?'DB 미저장 · 재시도 필요':'DB 연결 확인 필요'};
+    const labels={loading:'DB 불러오는 중',signedOut:'로그인·가입 신청',pending:'이용 승인 대기',denied:'이용 권한 없음',ready:'DB에 저장됨',saving:'DB 저장 중…',error:dirty?'DB 미저장 · 재시도 필요':'DB 연결 확인 필요'};
     document.querySelectorAll('[data-storage-label]').forEach(el=>{el.textContent=labels[phase];});
-    $('storage-status').textContent=labels[phase];$('sync-message').textContent=cloudError||({loading:'일정을 불러오고 있습니다.',signedOut:'기존 Supabase 앱 계정으로 로그인하세요.',ready:'일정·완료 상태·기준일을 DB에서 불러왔습니다.',saving:'변경 내용을 DB로 전송하고 있습니다.'}[phase]||'');
+    $('storage-status').textContent=labels[phase];$('sync-message').textContent=cloudError||({loading:'일정을 불러오고 있습니다.',signedOut:'승인받은 캘린더 계정으로 로그인하세요. 처음이라면 가입을 신청하세요.',pending:'관리자의 이용 승인이 필요합니다. 승인 전에는 개인 일정 DB에 접근할 수 없습니다.',denied:'이 계정은 이용 권한이 없습니다.',ready:'일정·완료 상태·기준일을 DB에서 불러왔습니다.',saving:'변경 내용을 DB로 전송하고 있습니다.'}[phase]||'');
     $('account-email').textContent=account?.email||'';
     $('login-form').hidden=!!account||phase==='loading';$('account-panel').hidden=!account;
     $('sync-retry').hidden=phase!=='error';$('sync-reload').hidden=!account||!dirty||phase==='saving';
-    $('sync-refresh').hidden=!account||phase!=='ready';$('logout-btn').disabled=dirty||['saving','loading'].includes(phase);
+    $('sync-refresh').hidden=!account||!['ready','pending'].includes(phase);$('sync-refresh').textContent=phase==='pending'?'승인 상태 다시 확인':'DB 최신 내용 불러오기';$('logout-btn').disabled=dirty||['saving','loading'].includes(phase);
     $('legacy-import').hidden=!legacy||!account;$('legacy-import').disabled=phase!=='ready';
     $('confirm-restore').disabled=phase!=='ready';
-    $('login-submit').disabled=phase==='loading';
+    $('login-submit').disabled=phase==='loading'||(authMode==='signup'&&!mailReady);
+    $('login-submit').textContent=authMode==='signup'?'가입 신청 및 이메일 인증':'로그인';
+    $('login-password').autocomplete=authMode==='signup'?'new-password':'current-password';$('login-password').minLength=authMode==='signup'?12:1;
+    $('auth-mode').textContent=authMode==='signup'?'기존 계정으로 로그인':'처음 이용하시나요? 가입 신청';$('auth-mode').hidden=!!account||phase==='loading';
+    $('signup-note').hidden=authMode!=='signup';$('mail-setup-note').hidden=mailReady;
+    $('request-approval').hidden=phase!=='pending';$('request-approval').disabled=!mailReady||approvalSending;
   }
   function canEdit(){
     if(phase==='ready')return true;
-    if(phase==='signedOut'){updateStorageStatus();if(!document.querySelector('dialog[open]'))showDialog('storage-dialog');toast('먼저 로그인하면 DB에 저장할 수 있습니다.');}
+    if(['signedOut','pending','denied'].includes(phase)){updateStorageStatus();if(!document.querySelector('dialog[open]'))showDialog('storage-dialog');toast(phase==='signedOut'?'로그인과 이용 승인이 필요합니다.':'관리자 승인 후 개인 캘린더를 이용할 수 있습니다.');}
     else toast(phase==='saving'?'DB 저장이 끝난 뒤 다시 시도해 주세요.':'저장·백업에서 DB 연결을 확인해 주세요.');
     return false;
   }
@@ -46,7 +51,10 @@
     render();
     if(!user){phase='signedOut';updateStorageStatus();return;}
     try{const next=await cloud.load();if(generation!==loadGeneration)return;saved=next;phase='ready';render();}
-    catch{if(generation!==loadGeneration)return;phase='error';cloudError='DB를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.';}
+    catch(error){if(generation!==loadGeneration)return;if(error.code==='ACCESS_PENDING'){
+      phase='pending';if(mailReady&&approvalNotifiedFor!==user.id){approvalNotifiedFor=user.id;approvalSending=true;cloudError='관리자에게 승인 메일을 요청하고 있습니다.';updateStorageStatus();try{await cloud.requestApproval();if(generation===loadGeneration)cloudError='관리자에게 승인 메일을 보냈습니다. 승인 후 아래에서 상태를 다시 확인하세요.';}catch(err){if(generation===loadGeneration)cloudError=err.message;}finally{approvalSending=false;}}
+    }else if(['ACCESS_REJECTED','ACCESS_SUSPENDED'].includes(error.code)){phase='denied';cloudError='이 계정의 이용이 거절되었거나 중지되었습니다. 관리자에게 문의하세요.';}
+    else{phase='error';cloudError='DB를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.';}}
     updateStorageStatus();
   }
   function monthKey(){return `${state.year}-${C.pad(state.month)}`;}
@@ -229,9 +237,14 @@
   $('confirm-restore').addEventListener('click',async()=>{if(!pendingBackup||!canEdit())return;saved=window.PlannerStorage.merge(saved,pendingBackup);pendingBackup=null;$('restore-preview').hidden=true;render();await persist();});
   $('login-form').addEventListener('submit',async e=>{
     e.preventDefault();phase='loading';cloudError='';updateStorageStatus();
-    try{await cloud.login($('login-email').value.trim(),$('login-password').value);$('login-password').value='';}
-    catch{phase='signedOut';cloudError='로그인하지 못했습니다. 이메일·비밀번호 또는 네트워크 연결을 확인하세요.';updateStorageStatus();}
+    try{if(authMode==='signup'){
+      if(!mailReady)throw new Error('메일 발송 설정을 준비 중입니다.');
+      await cloud.signup($('login-email').value.trim(),$('login-password').value);phase='signedOut';cloudError='가입 신청을 접수했습니다. 인증 메일을 확인한 뒤 로그인하면 관리자에게 이용 승인을 요청합니다.';authMode='login';updateStorageStatus();
+    }else await cloud.login($('login-email').value.trim(),$('login-password').value);$('login-password').value='';}
+    catch{phase='signedOut';cloudError=authMode==='signup'?'가입 신청을 접수하지 못했습니다. 입력 내용과 이메일 발송 설정을 확인하세요.':'로그인하지 못했습니다. 이메일 인증·비밀번호 또는 네트워크 연결을 확인하세요.';updateStorageStatus();}
   });
+  $('auth-mode').addEventListener('click',()=>{authMode=authMode==='login'?'signup':'login';$('login-password').value='';cloudError='';updateStorageStatus();});
+  $('request-approval').addEventListener('click',async()=>{if(phase!=='pending'||!mailReady||approvalSending)return;approvalSending=true;cloudError='관리자에게 승인 메일을 요청하고 있습니다.';updateStorageStatus();try{await cloud.requestApproval();cloudError='관리자에게 승인 메일을 보냈습니다.';}catch(err){cloudError=err.message;}finally{approvalSending=false;}updateStorageStatus();});
   $('logout-btn').addEventListener('click',async()=>{if(dirty)return;try{await cloud.logout();}catch{toast('로그아웃하지 못했습니다. 연결을 확인해 주세요.');}});
   $('sync-retry').addEventListener('click',async()=>{if(dirty)await persist();else if(account)await loadAccount(account);else{phase='loading';updateStorageStatus();try{await loadAccount(await cloud.init(loadAccount));}catch{phase='error';cloudError='로그인 연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.';updateStorageStatus();}}});
   $('sync-refresh').addEventListener('click',()=>loadAccount(cloud.user));
@@ -249,5 +262,7 @@
   updateStorageStatus();
   if(['calendar','year','guide'].includes(location.hash.slice(1)))state.view=location.hash.slice(1);
   render();
-  cloud.init(loadAccount).then(loadAccount).catch(()=>{phase='error';cloudError='로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.';updateStorageStatus();});
+  cloud.mailReadiness().then(result=>{mailReady=!!result.mailReady;updateStorageStatus();}).catch(()=>{}).finally(()=>{
+    cloud.init(loadAccount).then(loadAccount).catch(()=>{phase='error';cloudError='로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.';updateStorageStatus();});
+  });
 })();
