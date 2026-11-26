@@ -74,3 +74,15 @@ test('모든 월 중 업무에 독립된 예상 기간이 있고 기존 ID를 �
   assert.equal(one.map(e=>e.id+e.date).join(),two.map(e=>e.id+e.date).join());
   assert.equal(new Set(one.map(e=>e.id)).size,one.length);
 });
+test('주말 포함 일정이 월 경계를 넘으며 지정한 기본 일정만 대체한다',()=>{
+  const custom={id:'custom-qa-vote',guide:'evote-open',title:'전자투표',date:'2027-02-27',durationDays:3,includeWeekends:true,dateType:'planned',category:'agm',summary:'운영 기간',replaces:['month-2027-02-evote-setup']};
+  const events=C.eventsForYear(D,2027,{custom:[custom]});
+  const event=events.find(e=>e.id===custom.id);
+  assert.equal(event.endDate,'2027-03-01');
+  assert.equal(event.confirmed,false);
+  assert.ok(C.occursOn(event,'2027-02-28'));
+  assert.ok(C.eventsForMonth(events,'2027-03').includes(event));
+  assert.ok(event.steps.length>0);
+  assert.ok(!events.some(e=>e.id==='month-2027-02-evote-setup'));
+  assert.ok(events.some(e=>e.id==='month-2027-02-agm-board'));
+});

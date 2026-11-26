@@ -25,14 +25,15 @@
     while([0,6].includes(date.getDay()))date.setDate(date.getDate()+1);
     return dateKey(date);
   }
-  function workDates(start,days=1) {
+  function workDates(start,days=1,includeWeekends=false) {
     const date=parseDate(start);if(!date)return [];
     const dates=[dateKey(date)];
-    while(dates.length<duration(days)){date.setDate(date.getDate()+1);if(![0,6].includes(date.getDay()))dates.push(dateKey(date));}
+    while(dates.length<duration(days)){date.setDate(date.getDate()+1);if(includeWeekends||![0,6].includes(date.getDay()))dates.push(dateKey(date));}
     return dates;
   }
-  function occursOn(event,key){return workDates(event.date,event.durationDays).includes(key);}
-  function eventsForMonth(events,month){return events.filter(e=>e.date?workDates(e.date,e.durationDays).some(date=>date.startsWith(month)):e.month===month);}
+  function eventDates(event){return workDates(event.date,event.durationDays,event.includeWeekends);}
+  function occursOn(event,key){return eventDates(event).includes(key);}
+  function eventsForMonth(events,month){return events.filter(e=>e.date?eventDates(e).some(date=>date.startsWith(month)):e.month===month);}
   function eventsForYear(data, year, saved={}) {
     const settings=saved.settings||{}, overrides=saved.overrides||{}, done=saved.done||{};
     const years = new Set([year-1,year,year+1]);
@@ -40,7 +41,10 @@
     Object.keys(overrides).forEach(key=>{ const match=key.match(/^(?:month|date|agm|earnings)-(\d{4})-/); if(match) years.add(Number(match[1])); });
     const guides = new Map(data.guides.map(g=>[g.id,g]));
     const events=[];
+    const custom=(saved.custom||[]).filter(event=>parseDate(event.date));
+    const replaced=new Set(custom.flatMap(event=>event.replaces||[]));
     function add(event) {
+      if(replaced.has(event.id))return;
       const guide=guides.get(event.guide);
       const originalDate=event.date||null;
       event.durationDays=duration(event.durationDays);
@@ -75,7 +79,13 @@
         }
       });
     }
-    for(const event of saved.custom||[]) if(parseDate(event.date)) events.push({...event,month:event.date.slice(0,7),originalDate:event.date,durationDays:duration(event.durationDays),endDate:workDates(event.date,event.durationDays).at(-1),confirmed:true,label:'직접 추가',done:Boolean(done[event.id]),custom:true,steps:[],supplies:[],source:'직접 추가한 일정'});
+    for(const event of custom){
+      const guide=guides.get(event.guide);
+      const label={planned:'예정안',deadline:'계획상 마감',draft:'날짜 초안'}[event.dateType]||'직접 추가';
+      events.push({...guide,...event,month:event.date.slice(0,7),originalDate:event.date,durationDays:duration(event.durationDays),
+        endDate:eventDates(event).at(-1),confirmed:!event.dateType,draft:event.dateType==='draft',label,
+        done:Boolean(done[event.id]),custom:true,steps:guide?.steps||[],supplies:guide?.supplies||[],source:guide?.source||'직접 추가한 일정'});
+    }
     return events.sort((a,b)=>(a.date||a.month+'-99').localeCompare(b.date||b.month+'-99')||a.title.localeCompare(b.title,'ko'));
   }
   function matches(event,category,query) {

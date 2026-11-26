@@ -20,3 +20,11 @@ test('복원은 기존 다른 일정과 완료 상태를 보존하고 충돌 항
   const incoming={settings:{},overrides:{second:{date:'2026-11-21'}},done:{second:true},custom:[{id:'custom-2',title:'갱신 후'}]};
   const merged=S.merge(current,incoming);assert.equal(merged.custom.length,2);assert.equal(merged.custom[0].title,'기존');assert.equal(merged.custom[1].title,'갱신 후');assert.equal(merged.done.first,true);assert.equal(merged.overrides.first.date,'2026-11-20');
 });
+test('일정 파일의 유형과 주말 포함 여부를 보존하고 잘못된 대체 항목을 거부한다',()=>{
+  const backup=empty();
+  const item={id:'custom-qa',title:'투표',date:'2027-02-27',category:'agm',summary:'운영 기간',durationDays:3,includeWeekends:true,dateType:'planned',guide:'evote-open',replaces:['month-2027-02-evote-setup']};
+  backup.custom=[item];
+  assert.deepEqual(JSON.parse(JSON.stringify(S.validateBackup(backup).custom[0])),item);
+  item.replaces=['custom-other'];assert.throws(()=>S.validateBackup(backup));
+  delete item.replaces;item.includeWeekends='false';assert.throws(()=>S.validateBackup(backup));
+});

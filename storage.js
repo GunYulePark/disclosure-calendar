@@ -26,7 +26,14 @@
     for(const event of raw.custom){
       if(!object(event)||!safeKey(event.id)||!event.id.startsWith('custom-')||ids.has(event.id)||typeof event.title!=='string'||!event.title.trim()||event.title.length>80||!C.parseDate(event.date)||!categories.has(event.category)||typeof event.summary!=='string'||event.summary.length>600)throw new Error('추가 일정의 형식이 올바르지 않습니다.');
       if(event.durationDays!==undefined&&C.duration(event.durationDays)!==Number(event.durationDays))throw new Error('예상 소요일을 확인해 주세요.');
-      ids.add(event.id);result.custom.push({id:event.id,title:event.title,date:event.date,category:event.category,summary:event.summary,durationDays:C.duration(event.durationDays)});
+      if(event.dateType!==undefined&&!['planned','deadline','draft'].includes(event.dateType))throw new Error('일정 유형을 확인해 주세요.');
+      if(event.includeWeekends!==undefined&&typeof event.includeWeekends!=='boolean')throw new Error('주말 포함 설정을 확인해 주세요.');
+      if(event.guide!==undefined&&(typeof event.guide!=='string'||!safeKey(event.guide)))throw new Error('업무 가이드를 확인해 주세요.');
+      if(event.replaces!==undefined&&(!Array.isArray(event.replaces)||event.replaces.length>8||event.replaces.some(id=>typeof id!=='string'||!safeKey(id)||!/^(month|agm|date)-\d{4}-/.test(id))))throw new Error('대체할 기본 일정을 확인해 주세요.');
+      ids.add(event.id);
+      const item={id:event.id,title:event.title,date:event.date,category:event.category,summary:event.summary,durationDays:C.duration(event.durationDays)};
+      for(const field of ['dateType','includeWeekends','guide','replaces'])if(event[field]!==undefined)item[field]=event[field];
+      result.custom.push(item);
     }
     return result;
   }

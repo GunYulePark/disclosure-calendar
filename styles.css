@@ -98,3 +98,7 @@ form>label,.date-fields>label{display:flex;flex-direction:column;gap:8px;font-si
 .backup-section{border-top:1px solid var(--border);margin-top:24px;padding-top:20px}
 .backup-section .storage-buttons{margin-top:14px}
 .storage-buttons:not(:has(button:not([hidden]))){display:none}
+.schedule-preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);font-size:var(--text-sm)}
+.schedule-preview-bar p{color:var(--muted);font-size:var(--text-meta);line-height:1.6;margin-top:4px}
+.schedule-preview-actions,.preview-file-actions{display:flex;gap:8px;flex-wrap:wrap}
+.state-tag.deadline{background:#fff7ed;border-color:#fed7aa;color:#9a3412}

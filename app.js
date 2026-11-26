@@ -9,7 +9,7 @@
   const today=C.todaySeoul(), todayDate=C.parseDate(today);
   const state={year:todayDate.getFullYear(),month:todayDate.getMonth()+1,view:'calendar',category:'all',query:'',selectedDate:null,mode:'calendar',sort:'date',descending:false};
   const cloud=window.PlannerCloud, empty=window.PlannerSyncCore.empty;
-  let saved=empty(),selected=null,settingsYear=state.year,toastTimer,pendingBackup=null,legacy=null;
+  let saved=empty(),selected=null,settingsYear=state.year,toastTimer,pendingBackup=null,preview=null,legacy=null;
   let phase='loading',dirty=false,cloudError='',account=null,loadGeneration=0,authMode='login',mailReady=false,approvalNotifiedFor=null,approvalSending=false;
   try {const value=JSON.parse(localStorage.getItem(KEY)||'null');if(value)legacy=window.PlannerStorage.validateBackup({version:1,...value});}catch{/* Legacy data can still be imported from a backup. */}
   function toast(message) { $('toast').textContent=message;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),4500); }
@@ -23,6 +23,7 @@
     $('sync-refresh').hidden=!account||!['ready','pending'].includes(phase);$('sync-refresh').textContent=phase==='pending'?'승인 상태 다시 확인':'DB 최신 내용 불러오기';$('logout-btn').disabled=dirty||['saving','loading'].includes(phase);
     $('legacy-import').hidden=!legacy||!account;$('legacy-import').disabled=phase!=='ready';
     $('confirm-restore').disabled=phase!=='ready';
+    $('save-schedule-preview').disabled=phase!=='ready';
     $('login-submit').disabled=phase==='loading'||(authMode==='signup'&&!mailReady);
     $('login-submit').textContent=authMode==='signup'?'가입 신청 및 이메일 인증':'로그인';
     $('login-password').autocomplete=authMode==='signup'?'new-password':'current-password';$('login-password').minLength=authMode==='signup'?12:1;
@@ -30,7 +31,8 @@
     $('signup-note').hidden=authMode!=='signup';$('mail-setup-note').hidden=mailReady;
     $('request-approval').hidden=phase!=='pending';$('request-approval').disabled=!mailReady||approvalSending;
   }
-  function canEdit(){
+  function canEdit(importing=false){
+    if(preview&&!importing){toast('일정을 수정하려면 미리보기를 저장하거나 닫아 주세요.');return false;}
     if(phase==='ready')return true;
     if(['signedOut','pending','denied'].includes(phase)){updateStorageStatus();if(!document.querySelector('dialog[open]'))showDialog('storage-dialog');toast(phase==='signedOut'?'로그인과 이용 승인이 필요합니다.':'관리자 승인 후 개인 캘린더를 이용할 수 있습니다.');}
     else toast(phase==='saving'?'DB 저장이 끝난 뒤 다시 시도해 주세요.':'저장·백업에서 DB 연결을 확인해 주세요.');
@@ -58,15 +60,16 @@
     updateStorageStatus();
   }
   function monthKey(){return `${state.year}-${C.pad(state.month)}`;}
-  function events(){return C.eventsForYear(DATA,state.year,saved);}
+  function events(){return C.eventsForYear(DATA,state.year,preview?window.PlannerStorage.merge(saved,preview):saved);}
   function filtered(list){return list.filter(e=>C.matches(e,state.category,state.query));}
   function formatDate(date){const d=C.parseDate(date);return d?`${d.getMonth()+1}월 ${d.getDate()}일 (${['일','월','화','수','목','금','토'][d.getDay()]})`:'';}
   function period(e,compact=false){if(!e.date)return e.timing;const end=e.endDate||e.date;return end===e.date?formatDate(e.date):compact?`${Number(e.date.slice(5,7))}/${Number(e.date.slice(8))}–${Number(end.slice(5,7))}/${Number(end.slice(8))}`:`${formatDate(e.date)} ~ ${formatDate(end)}`;}
-  function tag(e){return e.done?'<span class="state-tag complete">완료</span>':e.draft?'<span class="state-tag draft">초안</span>':e.confirmed?'<span class="state-tag set">저장</span>':'<span class="state-tag">예정</span>';}
+  function tag(e){return e.done?'<span class="state-tag complete">완료</span>':e.dateType==='deadline'?'<span class="state-tag deadline">마감</span>':e.draft?'<span class="state-tag draft">초안</span>':e.confirmed?'<span class="state-tag set">저장</span>':'<span class="state-tag">예정</span>';}
   function eventButton(e,kind='task',day=null) {
     const c=category(e.category);
-    if(kind==='calendar')return `<button class="calendar-event ${e.done?'is-done':''} ${e.draft?'draft-event':''} ${day&&day!==e.date?'continued':''}" style="--category:${c.color};--soft:${c.soft}" data-event="${esc(e.id)}" title="${esc(e.title)} · ${esc(period(e))} · ${e.draft?'초안':e.confirmed?'저장':'예정'} · 예상 ${e.durationDays||1}일"><span class="event-dot"></span><span>${esc(e.title)}</span>${e.done?icon('check'):''}</button>`;
-    return `<button class="task-row ${e.done?'is-done':''}" data-event="${esc(e.id)}"><span class="task-indicator" style="--category:${c.color}">${e.done?icon('check'):''}</span><span class="task-body"><strong>${esc(e.title)}</strong><small>${esc(e.date?period(e,true):e.timing)}${e.durationDays>1?` · 예상 ${e.durationDays}일`:''}</small></span>${tag(e)}<span class="row-arrow">${icon('right')}</span></button>`;
+    const durationText=e.includeWeekends?`주말 포함 ${e.durationDays}일`:`예상 ${e.durationDays||1}일`;
+    if(kind==='calendar')return `<button class="calendar-event ${e.done?'is-done':''} ${e.draft?'draft-event':''} ${day&&day!==e.date?'continued':''}" style="--category:${c.color};--soft:${c.soft}" data-event="${esc(e.id)}" title="${esc(e.title)} · ${esc(period(e))} · ${esc(e.label)} · ${durationText}"><span class="event-dot"></span><span>${e.dateType==='deadline'?'마감 · ':''}${esc(e.title)}</span>${e.done?icon('check'):''}</button>`;
+    return `<button class="task-row ${e.done?'is-done':''}" data-event="${esc(e.id)}"><span class="task-indicator" style="--category:${c.color}">${e.done?icon('check'):''}</span><span class="task-body"><strong>${esc(e.title)}</strong><small>${esc(e.date?period(e,true):e.timing)}${e.durationDays>1?` · ${durationText}`:''}</small></span>${tag(e)}<span class="row-arrow">${icon('right')}</span></button>`;
   }
   function renderCategories(){
     const list=state.view==='guide'?DATA.guides:state.view==='year'?events().filter(e=>e.month.startsWith(String(state.year))):C.eventsForMonth(events(),monthKey());
@@ -130,6 +133,7 @@
     $('guide-grid').innerHTML=`<table class="data-table guide-table"><caption class="sr-only">업무 가이드 ${guides.length}개</caption><thead><tr><th scope="col">업무 안내 <span class="table-total">${guides.length}</span></th><th scope="col">진행 시점</th><th scope="col" class="category-column">업무 구분</th><th scope="col" class="detail-cell"><span class="sr-only">상세 보기</span></th></tr></thead><tbody>${guides.map(g=>`<tr><td><button class="table-task-link" data-guide="${g.id}">${esc(g.title)}</button><p class="table-summary">${esc(g.summary)}</p><small class="mobile-category">${esc(category(g.category).label)}</small></td><td class="guide-timing">${esc(g.timing)}</td><td class="category-column">${badge(g.category)}</td><td class="detail-cell"><button class="icon-button ghost" data-guide="${g.id}" aria-label="${esc(g.title)} 상세 보기">${icon('right')}</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty-table">일치하는 업무가 없습니다. 검색어나 업무 구분을 바꿔 보세요.</td></tr>'}</tbody></table>`;
   }
   function render(){
+    $('schedule-preview-bar').hidden=!preview;
     const all=events(),monthEvents=C.eventsForMonth(all,monthKey());
     renderCategories();renderSummary(state.view==='year'?all.filter(e=>e.month.startsWith(String(state.year))):monthEvents);
     $('month-title').textContent=state.view==='calendar'?`${state.year}년 ${state.month}월`:`${state.year}년`;
@@ -157,7 +161,7 @@
     selected=isGuide?{...DATA.guides.find(g=>g.id===id),isGuide:true}:events().find(e=>e.id===id);
     if(!selected)return;
     const e=selected;$('detail-category').innerHTML=badge(e.category);
-    $('detail-content').innerHTML=`<h2>${esc(e.title)}</h2><div class="detail-time">◷ ${esc(e.isGuide?e.timing:e.date?period(e)+' · '+e.label:e.timing+' · 날짜 미정')}${e.isGuide?'':tag(e)}</div><p class="detail-summary">${esc(e.summary||'직접 등록한 일정입니다.')}</p>${e.steps?.length?`<section class="detail-section"><h3>해야 할 일</h3><ol class="step-list">${e.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></section>`:''}${e.supplies?.length?`<section class="detail-section"><h3>미리 준비할 것</h3><div class="supply-tags">${e.supplies.map(s=>`<span>${esc(s)}</span>`).join('')}</div></section>`:''}${e.partners?`<p class="detail-partners"><strong>함께 확인</strong>${esc(e.partners)}</p>`:''}${e.note?`<div class="detail-note"><strong>확인 메모</strong><p>${esc(e.note)}</p></div>`:''}${e.isGuide?'':`<section class="date-edit"><h3>일정 조정</h3><div class="date-edit-fields"><label>시작일<input type="date" id="detail-date" value="${esc(e.date||'')}" aria-label="업무 날짜 지정"></label><label>예상 소요일<input type="number" id="detail-days" min="1" max="30" value="${e.durationDays||1}" aria-label="예상 소요일"></label></div><p class="field-hint">${e.draft?'업무 계획용 초안입니다. ':''}시작일 이후 주말을 건너뜁니다. 공휴일·협조 대기는 별도로 조정하세요.</p><div class="date-edit-actions"><button id="save-event-date" class="button small">일정 저장</button>${e.custom?'':'<button id="reset-event-date" class="text-button">기본안 복원</button>'}</div></section>`}<div class="detail-source">참고 · ${esc(e.source||'직접 추가')}${(e.links||[]).map(([label,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`).join('')}</div>${e.custom?'<button id="delete-custom" class="text-button delete-button">이 일정 삭제</button>':''}`;
+    $('detail-content').innerHTML=`<h2>${esc(e.title)}</h2><div class="detail-time">◷ ${esc(e.isGuide?e.timing:e.date?period(e)+' · '+e.label:e.timing+' · 날짜 미정')}${e.isGuide?'':tag(e)}</div><p class="detail-summary">${esc(e.summary||'직접 등록한 일정입니다.')}</p>${e.steps?.length?`<section class="detail-section"><h3>해야 할 일</h3><ol class="step-list">${e.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></section>`:''}${e.supplies?.length?`<section class="detail-section"><h3>미리 준비할 것</h3><div class="supply-tags">${e.supplies.map(s=>`<span>${esc(s)}</span>`).join('')}</div></section>`:''}${e.partners?`<p class="detail-partners"><strong>함께 확인</strong>${esc(e.partners)}</p>`:''}${e.note?`<div class="detail-note"><strong>확인 메모</strong><p>${esc(e.note)}</p></div>`:''}${e.isGuide?'':`<section class="date-edit"><h3>일정 조정</h3><div class="date-edit-fields"><label>시작일<input type="date" id="detail-date" value="${esc(e.date||'')}" aria-label="업무 날짜 지정"></label><label>예상 소요일<input type="number" id="detail-days" min="1" max="30" value="${e.durationDays||1}" aria-label="예상 소요일"></label></div><p class="field-hint">${e.draft?'업무 계획용 초안입니다. ':''}${e.includeWeekends?'이 일정은 주말을 포함합니다.':'시작일 이후 주말을 건너뜁니다. 공휴일·협조 대기는 별도로 조정하세요.'}</p><div class="date-edit-actions"><button id="save-event-date" class="button small">일정 저장</button>${e.custom?'':'<button id="reset-event-date" class="text-button">기본안 복원</button>'}</div></section>`}<div class="detail-source">참고 · ${esc(e.source||'직접 추가')}${(e.links||[]).map(([label,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`).join('')}</div>${e.custom?'<button id="delete-custom" class="text-button delete-button">이 일정 삭제</button>':''}`;
     $('detail-done').hidden=Boolean(e.isGuide);$('detail-done').textContent=e.done?'완료 취소':'완료로 표시';
     if(!$('detail-dialog').open)showDialog('detail-dialog');
   }
@@ -231,10 +235,26 @@
   $('choose-restore').addEventListener('click',()=>$('restore-file').click());
   $('restore-file').addEventListener('change',async e=>{
     pendingBackup=null;$('restore-preview').hidden=true;const file=e.target.files[0];if(!file)return;
-    try{if(file.size>2*1024*1024)throw new Error('2MB 이하 백업 파일을 선택해 주세요.');pendingBackup=window.PlannerStorage.validateBackup(JSON.parse(await file.text()));$('restore-summary').textContent=`개인 일정 ${pendingBackup.custom.length}개 · 날짜 변경 ${Object.keys(pendingBackup.overrides).length}개 · 기준일 ${Object.keys(pendingBackup.settings).length}개 연도 · 완료 상태 ${Object.keys(pendingBackup.done).length}개`;$('restore-preview').hidden=false;}
+    try{if(file.size>2*1024*1024)throw new Error('2MB 이하 백업 파일을 선택해 주세요.');pendingBackup=window.PlannerStorage.validateBackup(JSON.parse(await file.text()));$('restore-summary').textContent=`개인 일정 ${pendingBackup.custom.length}개 · 날짜 변경 ${Object.keys(pendingBackup.overrides).length}개 · 기준일 ${Object.keys(pendingBackup.settings).length}개 연도 · 완료 상태 ${Object.keys(pendingBackup.done).length}개`;$('preview-schedule').hidden=!pendingBackup.custom.length;$('restore-preview').hidden=false;}
     catch(error){toast(error instanceof SyntaxError?'JSON 백업 파일을 읽을 수 없습니다.':error.message);}finally{e.target.value='';}
   });
-  $('confirm-restore').addEventListener('click',async()=>{if(!pendingBackup||!canEdit())return;saved=window.PlannerStorage.merge(saved,pendingBackup);pendingBackup=null;$('restore-preview').hidden=true;render();await persist();});
+  async function restoreBackup(backup){
+    if(!backup||!canEdit(true))return;
+    saved=window.PlannerStorage.merge(saved,backup);preview=null;pendingBackup=null;
+    $('restore-preview').hidden=true;render();await persist();
+  }
+  $('confirm-restore').addEventListener('click',()=>restoreBackup(pendingBackup));
+  $('preview-schedule').addEventListener('click',()=>{
+    if(!pendingBackup?.custom.length)return;
+    preview=pendingBackup;
+    const first=preview.custom.reduce((earliest,event)=>event.date<earliest?event.date:earliest,preview.custom[0].date);
+    state.year=Number(first.slice(0,4));state.month=Number(first.slice(5,7));state.view='calendar';state.mode='calendar';
+    state.selectedDate=null;state.category='all';state.query='';$('search').value='';
+    location.hash='calendar';$('storage-dialog').close();render();$('schedule-preview-title').focus();
+  });
+  $('save-schedule-preview').addEventListener('click',()=>restoreBackup(preview));
+  $('close-schedule-preview').addEventListener('click',()=>{preview=null;render();$('main').focus();});
+  $('preview-login').addEventListener('click',()=>showDialog('storage-dialog'));
   $('login-form').addEventListener('submit',async e=>{
     e.preventDefault();phase='loading';cloudError='';updateStorageStatus();
     try{if(authMode==='signup'){
